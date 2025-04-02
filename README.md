@@ -1,7 +1,3 @@
-# ros2_python_template
-1. create repo from template
-2. git clone the new repo
-3. cd into the bash folder
-4. run `bash rename_package.sh $repo_name`
+# auto_shepherd_sheep_localisation
 
-commit changes for initial commit
+This repository is for the detection, tracking, and localisation of sheep from ariel footage
