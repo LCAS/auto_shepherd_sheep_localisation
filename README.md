@@ -1,4 +1,4 @@
-# Group 1 – ShLAMb (Sheep Location and Mapping) 
+# Group 1 – ShLAMb (Sheep Localisation and Mapping) 
 
 ## Goal:
 To develop and validate a robust pipeline for the automated detection and tracking of individual sheep in aerial video data captured by drones, enabling enhanced livestock monitoring and management in open-field environments. 
