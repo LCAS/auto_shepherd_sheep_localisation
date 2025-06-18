@@ -21,6 +21,8 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
+            f'data_loader_node.py = {pkg}.data_loader_node:main',
+            f'detect_sheep.py = {pkg}.detect_sheep:main'
         ],
     },
 )
