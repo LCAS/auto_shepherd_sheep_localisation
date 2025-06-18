@@ -2,7 +2,7 @@
 
 # --- Configuration ---
 COMPOSE_FILE="docker-compose.yml" # Your docker compose file name
-SERVICE_NAME="ros2_dev"         # The name of your service in docker-compose.yml
+SERVICE_NAME="auto_shepherd_sheep_localisation_ros2_humble"         # The name of your service in docker-compose.yml
 
 # Check if on Linux (most straightforward X11 forwarding)
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
