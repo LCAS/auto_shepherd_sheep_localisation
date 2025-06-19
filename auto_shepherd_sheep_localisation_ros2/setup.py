@@ -2,7 +2,7 @@ from setuptools import setup
 from glob import glob
 import os
 
-package_name = 'auto_shepherd_sheep_localisation'
+package_name = 'auto_shepherd_sheep_localisation_ros2'
 pkg = package_name
 
 setup(
