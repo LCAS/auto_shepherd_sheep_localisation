@@ -10,11 +10,14 @@ init_cmd: |
   set -o pipefail
 
 windows:
-  - name: mapper
+  - name: data_loader
     panes:
-      - ros2 run auto_shepherd_sheep_detector_ros2 data_loader.py
+      - ros2 run auto_shepherd_sheep_localisation_ros2 data_loader_node.py
+
+  - name: visuals
+    panes:
       - rviz2
 
   - name: detector
     panes:
-      - ros2 run auto_shepherd_sheep_detector_ros2 detector.py
+      - ros2 run auto_shepherd_sheep_localisation_ros2 detect_sheep.py
