@@ -10,7 +10,7 @@ To develop and validate a robust pipeline for the automated detection and tracki
 
 ## Activities:
 ### Primary Activity: 
-`Sheep Detection` – Develop and optimise a vision-based pipeline for real-time sheep detection and individual tracking from UAV-captured video streams.  
+`Sheep Detection` – Develop and optimise a vision-based pipeline for real-time sheep detection and individual tracking from UAV-captured video streams.
 
 ### Secondary Activity:
 `Geo-Referencing` – Estimate the geo-referenced position of each tracked sheep in a global coordinate frame using drone telemetry and camera pose data, constructing a map of their positions, with respect to the field boundaries. 
@@ -19,7 +19,7 @@ To develop and validate a robust pipeline for the automated detection and tracki
 `Synthetic Data` – Work with Group 5 to connect a video stream from the simulation to incorporate synthetic image into the training pipeline. 
 
 ## Outcomes:
-This work package is expected to deliver a validated end-to-end system capable of detecting and persistently tracking sheep in aerial footage, with output locations accurately mapped to global coordinates. The dataset and methodology will be documented and shared with the research community, laying the groundwork for publication in leading robotics or precision agriculture venues.  
+This work package is expected to deliver a validated end-to-end system capable of detecting and persistently tracking sheep in aerial footage, with output locations accurately mapped to global coordinates. The dataset and methodology will be documented and shared with the research community, laying the groundwork for publication in leading robotics or precision agriculture venues.
 
 ## Future Engagement:
-Members of the group will be encouraged to engage with future work exploring multi-species detection, behavioural pattern recognition, and integration with animal health monitoring systems. 
+Members of the group will be encouraged to engage with future work exploring multi-species detection, behavioural pattern recognition, and integration with animal health monitoring systems.
