@@ -1,0 +1,20 @@
+session: detector
+init_cmd: |
+  echo " "
+  echo " "
+  echo " "
+  echo "Running Initialisation"
+
+  #exec /bin/bash
+  cd @TMULE_CONFIG_DIR@ || true
+  set -o pipefail
+
+windows:
+  - name: mapper
+    panes:
+      - ros2 run auto_shepherd_sheep_detector_ros2 data_loader.py
+      - rviz2
+
+  - name: detector
+    panes:
+      - ros2 run auto_shepherd_sheep_detector_ros2 detector.py
