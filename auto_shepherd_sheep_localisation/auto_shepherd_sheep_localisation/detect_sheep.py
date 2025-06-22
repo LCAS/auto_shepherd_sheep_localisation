@@ -3,12 +3,15 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
+from cv_bridge import CvBridge
 
 from sensor_msgs.msg import Image, NavSatFix
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 
-from detection_process import detect_on_image    # <--- CODE GOES IN THIS FUNCTION TO ACTUALLY DETECT
+from detection_process.modules import sheepdetectROS    # <--- CODE GOES IN THIS FUNCTION TO ACTUALLY DETECT
+from modules.config import *
+from ultralytics import YOLO
 
 
 class SheepDetector(Node):
@@ -25,6 +28,15 @@ class SheepDetector(Node):
         self.create_subscription(NavSatFix, "/gps", self.gps_cb, self.qos())
         self.create_subscription(Image, "/drone_feed", self.image_cb, 10)
 
+        self.SD = SheepDetectROS(YOLO_WEIGHTS_SHEEP, 
+            conf=SC, 
+            iou=SIOU, 
+            agnostic_nms=SA, 
+            max_det=SM, 
+            verbose=SV, 
+            stream=SS,
+            )
+        self.bridge = CvBridge()
     # convenience method for a latched QoS profile
     def qos(self):
         return QoSProfile(
@@ -41,9 +53,9 @@ class SheepDetector(Node):
     def image_cb(self, img_msg: Image):
         if self.gps is None:
             return  # skip until we have GPS
-
-        detections = detect_on_image(img_msg, self.gps)
-
+        frame = self.bridge.imgmsg_to_cv2(data)
+        detections = self.SD.predict(frame, self.gps)
+        
         path = Path()
         path.header.stamp = img_msg.header.stamp   # timestamp from the image
         path.header.frame_id = "map"
