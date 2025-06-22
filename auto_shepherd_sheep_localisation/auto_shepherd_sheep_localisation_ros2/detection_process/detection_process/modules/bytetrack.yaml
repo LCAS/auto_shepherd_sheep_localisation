@@ -1,0 +1,7 @@
+tracker_type: bytetrack
+track_high_thresh: 0.3       # or lower to 0.25 if detections are flaky
+track_low_thresh: 0.1
+new_track_thresh: 0.4       # RAISE to avoid unnecessary new IDs
+track_buffer: 60             # INCREASE to hold onto tracks longer
+match_thresh: 0.8           # Slightly lower to favor continuity
+fuse_score: True
