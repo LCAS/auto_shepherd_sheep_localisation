@@ -11,7 +11,11 @@ init_cmd: |
 
   # TODO: add this as a wget
   #https://lcas.lincoln.ac.uk/nextcloud/index.php/s/fCtzXNM74PktaGg
-  export SAMPLE_VIDEO='/home/ros/base_ws/src/auto_shepherd_sheep_localisation_ros2/auto_shepherd_sheep_localisation_ros2/detection_process/samples/DJI_0311_a_72m.MP4'
+  PKG="/home/ros/base_ws/src/auto_shepherd_sheep_localisation_ros2"
+  DP="$PKG/auto_shepherd_sheep_localisation_ros2/detection_process"
+  export SAMPLE_VIDEO="$DP/samples/DJI_0311_a_72m.MP4"
+  export YOLO_WEIGHTS="$DP/models/Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
+  export YOLO_TRACKER="$DP/modules/bytetrack.yaml"
 
 windows:
 
