@@ -9,15 +9,24 @@ init_cmd: |
   cd @TMULE_CONFIG_DIR@ || true
   set -o pipefail
 
-windows:
-  - name: data_loader
-    panes:
-      - ros2 run auto_shepherd_sheep_localisation_ros2 data_loader_node.py
+  # TODO: add this as a wget
+  #https://lcas.lincoln.ac.uk/nextcloud/index.php/s/fCtzXNM74PktaGg
+  export SAMPLE_VIDEO='/home/ros/base_ws/src/auto_shepherd_sheep_localisation_ros2/auto_shepherd_sheep_localisation_ros2/detection_process/samples/DJI_0311_a_72m.MP4'
 
-  - name: visuals
-    panes:
-      - rviz2
+windows:
 
   - name: detector
     panes:
       - ros2 run auto_shepherd_sheep_localisation_ros2 detect_sheep.py
+
+#  - name: visuals
+#    panes:
+#      - rviz2
+
+  - name: data_loader
+    panes:
+      - ros2 run auto_shepherd_sheep_localisation_ros2 data_loader_node.py
+
+  - name: data
+    panes:
+      - "ros2 topic pub /video_filepath std_msgs/msg/String \"data: '$SAMPLE_VIDEO'\" --once"

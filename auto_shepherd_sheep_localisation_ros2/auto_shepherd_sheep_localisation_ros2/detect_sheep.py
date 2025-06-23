@@ -9,8 +9,8 @@ from sensor_msgs.msg import Image, NavSatFix
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 
-from detection_process.modules import sheepdetectROS    # <--- CODE GOES IN THIS FUNCTION TO ACTUALLY DETECT
-from modules.config import *
+from auto_shepherd_sheep_localisation_ros2.detection_process.modules import sheepdetectROS
+from auto_shepherd_sheep_localisation_ros2.modules.config import *
 from ultralytics import YOLO
 
 
