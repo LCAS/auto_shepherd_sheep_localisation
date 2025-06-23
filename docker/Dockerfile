@@ -90,12 +90,21 @@ RUN apt-get update && \
 
 
 # 5. Python pip installs
+ARG PIP_DEFAULT_TIMEOUT=100
+ARG PIP_RETRIES=5
+ENV PIP_DEFAULT_TIMEOUT=$PIP_DEFAULT_TIMEOUT \
+    PIP_RETRIES=$PIP_RETRIES
+
 RUN python3 -m pip install --no-cache-dir --upgrade \
     pip wheel \
     setuptools==58.2.0 \
     packaging==24.2 \
+    "numpy>=1.22,<1.25" \
+    "scipy==1.12.*" \
     tmule==1.5.9 \
-    pyserial
+    pyserial \
+    ultralytics
+
 
 # ──────────────────────────────
 # 7. Drop privileges
