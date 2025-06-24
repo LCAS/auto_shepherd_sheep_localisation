@@ -26,7 +26,7 @@ class SheepDetector(Node):
         self.gps = None
 
         # publisher for the outgoing Path
-        self.path_pub = self.create_publisher(Path, "/sheep_paths", 10)
+        self.path_pub = self.create_publisher(Path, "/sheep/poses", 10)
 
         # subscribe to latched GPS and live image topics
         self.create_subscription(NavSatFix, "/gps", self.gps_cb, self.qos())
@@ -45,6 +45,7 @@ class SheepDetector(Node):
             stream=SS,
             )
         self.bridge = CvBridge()
+
     # convenience method for a latched QoS profile
     def qos(self):
         return QoSProfile(
@@ -77,7 +78,7 @@ class SheepDetector(Node):
             ps.header.frame_id = str(sheep_id)     # use frame_id to store ID
             ps.pose.position.x = pose['position']['x']
             ps.pose.position.y = pose['position']['y']
-            path.poses.append(psn)
+            path.poses.append(ps)
         self.path_pub.publish(path)  # publish to /sheep_paths
 
 
