@@ -41,8 +41,11 @@ class VideoPublisher(Node):
 
     # callback: start video thread
     def path_cb(self, msg: String):
+        self.get_logger().info(f"Recieved request to play: {msg.data}")
         if self.playing:
+            self.get_logger().info("Ignoring recieved request.")
             return
+        self.get_logger().info("Started playing...")
         threading.Thread(target=self.play_video, args=(msg.data,), daemon=True).start()
 
     # read video frames and publish
@@ -76,6 +79,7 @@ class VideoPublisher(Node):
 
             time.sleep(period)
 
+        self.get_logger().info("Completed playback.")
         cap.release()
         self.playing = False
 

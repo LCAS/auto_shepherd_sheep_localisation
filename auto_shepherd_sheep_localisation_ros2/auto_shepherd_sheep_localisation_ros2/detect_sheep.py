@@ -25,8 +25,9 @@ class SheepDetector(Node):
         # latest GPS fix (updated by gps_cb)
         self.gps = None
 
-        # publisher for the outgoing Path
+        # publisher for the outgoing Path and Labelled image
         self.path_pub = self.create_publisher(Path, "/sheep/poses", 10)
+        self.boxes_pub = self.create_publisher(Image, "/sheep/labelled_img", 10)
 
         # subscribe to latched GPS and live image topics
         self.create_subscription(NavSatFix, "/gps", self.gps_cb, self.qos())
@@ -58,28 +59,49 @@ class SheepDetector(Node):
     def gps_cb(self, msg: NavSatFix):
         self.gps = msg
 
-    # run detection on every frame and publish the result as a Path
     def image_cb(self, msg: Image):
         if self.gps is None:
-            return  # skip until we have GPS
+            return
 
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        detections = self.SD.predict(frame, self.gps)
+        ids, poses, box_list = self.SD.predict(frame, self.gps)
 
         path = Path()
-        path.header.stamp = msg.header.stamp   # timestamp from the image
+        path.header.stamp = msg.header.stamp
         path.header.frame_id = "map"
 
-        # pack each (id, pose) pair into PoseStamped
-        for i in range(len(detections[0])):
-            sheep_id, pose = detections[0][i], detections[1][i]
+        for i in range(len(ids)):
+            sheep_id = ids[i]
+            pose = poses[i]
+            boxes = box_list[i]  # this is a `Boxes` object (may have 1 or more boxes)
+
+            # Draw all boxes for this detection
+            for j in range(len(boxes.xyxy)):
+                x1, y1, x2, y2 = map(int, boxes.xyxy[j].cpu().numpy())
+                conf = float(boxes.conf[j]) if boxes.conf is not None else 0.0
+
+                label = f"ID: {sheep_id} ({conf:.2f})"
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, label, (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+            # Add pose to Path message
             ps = PoseStamped()
             ps.header.stamp = msg.header.stamp
-            ps.header.frame_id = str(sheep_id)     # use frame_id to store ID
+            ps.header.frame_id = str(sheep_id)
             ps.pose.position.x = pose['position']['x']
             ps.pose.position.y = pose['position']['y']
             path.poses.append(ps)
-        self.path_pub.publish(path)  # publish to /sheep_paths
+
+        self.path_pub.publish(path)
+
+        img_msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
+        img_msg.header.stamp = msg.header.stamp
+        img_msg.header.frame_id = msg.header.frame_id
+        self.boxes_pub.publish(img_msg)
+
+
+
 
 
 def main():

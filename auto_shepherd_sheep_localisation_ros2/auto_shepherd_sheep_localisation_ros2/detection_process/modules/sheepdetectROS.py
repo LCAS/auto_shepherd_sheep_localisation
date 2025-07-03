@@ -65,7 +65,7 @@ class SheepDetectROS:
             # Convert lat,lon into pose format (dictionary)
             poses.append(self.makePose(lat.item(),lon.item()))
 
-        return [ids, poses]
+        return [ids, poses, boxes]
 
 
     def getBoxes(self, results):
