@@ -92,7 +92,7 @@ class SheepDetector(Node):
     # run detection on every frame and publish the result as a Path
     def image_cb(self, msg: Image):
         if self.gps is None:
-            return  # skip until we have GPS
+            return
 
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         detections = self.SD.predict(frame, self.gps, 
@@ -135,7 +135,7 @@ class SheepDetector(Node):
             self.get_logger().warn(f"Failed to publish annotated image: {e}")
 
         path = Path()
-        path.header.stamp = msg.header.stamp   # timestamp from the image
+        path.header.stamp = msg.header.stamp
         path.header.frame_id = "map"
 
         # pack each (id, pose) pair into PoseStamped
@@ -143,11 +143,20 @@ class SheepDetector(Node):
             sheep_id, pose = sheep_ids[i], poses[i]
             ps = PoseStamped()
             ps.header.stamp = msg.header.stamp
-            ps.header.frame_id = str(sheep_id)     # use frame_id to store ID
+            ps.header.frame_id = str(sheep_id)
             ps.pose.position.x = pose['position']['x']
             ps.pose.position.y = pose['position']['y']
             path.poses.append(ps)
-        self.path_pub.publish(path)  # publish to /sheep_paths
+
+        self.path_pub.publish(path)
+
+        img_msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
+        img_msg.header.stamp = msg.header.stamp
+        img_msg.header.frame_id = msg.header.frame_id
+        self.boxes_pub.publish(img_msg)
+
+
+
 
         # Cluster detections by proximity and publish cluster centroids
         if len(sheep_ids) > 0:
