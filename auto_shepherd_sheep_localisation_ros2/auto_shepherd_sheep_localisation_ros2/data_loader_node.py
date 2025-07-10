@@ -72,12 +72,13 @@ class VideoPublisher(Node):
             fix = NavSatFix()
             fix.header.stamp = stamp
             fix.header.frame_id = "map"
-            fix.latitude = 53.01020
-            fix.longitude = -0.53434
+            fix.latitude = 53.2642
+            fix.longitude = -0.5327
+            
             fix.altitude = 45.24
             self.gps_pub.publish(fix)
 
-            time.sleep(period)
+            time.sleep(period/10)
 
         self.get_logger().info("Completed playback.")
         cap.release()
