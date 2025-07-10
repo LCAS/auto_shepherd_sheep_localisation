@@ -56,7 +56,11 @@ TMUX_CONF="$HOME/bash_scripts/tmux.conf"
 
 # Define custom functions to control the tmule
 alias t='tmux'
-export INTERNAL=${BASE_WS}/src/auto_shepherd_sheep_localisation_ros2/tmule/internal.tmule.yaml
-function int(){  tmule -c $INTERNAL $1 ; }
+
+# TMuLe for connecting with other subsystems
 export CONNECTED=${BASE_WS}/src/auto_shepherd_sheep_localisation_ros2/tmule/connected.tmule.yaml
 function con(){  tmule -c $CONNECTED $1 ; }
+
+# TMuLe for injecting data to inputs
+export INJECTED=${BASE_WS}/src/auto_shepherd_sheep_localisation_ros2/tmule/injected.tmule.yaml
+function inj(){  tmule -c $INJECTED $1 ; }

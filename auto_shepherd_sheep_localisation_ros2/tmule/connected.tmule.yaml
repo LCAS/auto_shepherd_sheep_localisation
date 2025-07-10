@@ -23,12 +23,13 @@ init_cmd: |
   export YOLO_WEIGHTS="$DP/models/Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
   export YOLO_TRACKER="$DP/modules/bytetrack.yaml"
 
+
 windows:
 
-  - name: detector
-    panes:
-      - ros2 run auto_shepherd_sheep_localisation_ros2 detect_sheep.py
-
-  - name: visuals
+  - name: outputs
     panes:
       - rviz2
+
+  - name: system
+    panes:
+      - ros2 run auto_shepherd_sheep_localisation_ros2 detect_sheep.py
