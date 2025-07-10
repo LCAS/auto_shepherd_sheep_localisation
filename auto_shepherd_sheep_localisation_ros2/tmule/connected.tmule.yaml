@@ -20,15 +20,17 @@ init_cmd: |
   #https://lcas.lincoln.ac.uk/nextcloud/index.php/s/fCtzXNM74PktaGg
   PKG="/home/ros/base_ws/src/auto_shepherd_sheep_localisation_ros2"
   DP="$PKG/auto_shepherd_sheep_localisation_ros2/detection_process"
-  export YOLO_WEIGHTS="$DP/models/Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
+  # export YOLO_WEIGHTS="$DP/models/Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
+  export YOLO_WEIGHTS="$DP/models/sample_models/Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
   export YOLO_TRACKER="$DP/modules/bytetrack.yaml"
+
 
 windows:
 
-  - name: detector
-    panes:
-      - ros2 run auto_shepherd_sheep_localisation_ros2 detect_sheep.py
-
-  - name: visuals
+  - name: outputs
     panes:
       - rviz2
+
+  - name: system
+    panes:
+      - ros2 run auto_shepherd_sheep_localisation_ros2 detect_sheep.py
