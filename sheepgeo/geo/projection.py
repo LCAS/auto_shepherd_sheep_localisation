@@ -13,7 +13,6 @@ Pipeline:
 import numpy as np
 import logging
 from typing import Tuple, Optional
-from pyproj import Transformer
 
 from sheepgeo.config import CameraConfig, DEFAULT_AGL_OFFSET_M, DEFAULT_GROUND_ELEV_M
 from sheepgeo.io.srt_reader import SrtTelemetry

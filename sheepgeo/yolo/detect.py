@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from sheepgeo.config import SHEEP_CLASS_ID, DEFAULT_CONFIDENCE, DEFAULT_IOU_THRESHOLD
+from sheepgeo.config import DEFAULT_CONFIDENCE, DEFAULT_IOU_THRESHOLD
 
 
 logger = logging.getLogger(__name__)
@@ -112,11 +112,10 @@ class SheepDetector:
                 # Get class ID
                 class_id = int(box.cls.item())
                 
-                # Filter to sheep class only
-                # Note: COCO class 18 is 'dog', but many YOLO models trained on livestock
-                # may use different class IDs. We'll accept all detections here and
-                # let the user filter by class name if needed.
-                # For now, we accept all detections from the model.
+                # Note: We accept all detections from the model here.
+                # The CLI provides --filter-class option to filter by class name (e.g., 'sheep')
+                # rather than hard-coding class IDs, since different models may use different
+                # class IDs. COCO models: sheep=19, dog=18, but custom livestock models vary.
                 
                 # Get bounding box coordinates
                 bbox_xyxy = box.xyxy[0].cpu().numpy().tolist()

@@ -102,7 +102,11 @@ DRONE_CAMERAS: Dict[str, CameraConfig] = {
 DEFAULT_YOLO_MODEL = "yolov8n.pt"  # Nano model, includes 'sheep' class
 DEFAULT_CONFIDENCE = 0.25
 DEFAULT_IOU_THRESHOLD = 0.45
-SHEEP_CLASS_ID = 18  # COCO class ID for sheep
+# Note: COCO class IDs - 18=dog, 19=sheep, 20=cow, 21=elephant, etc.
+# Most livestock detection models use custom class IDs, so users should
+# verify their model's class mapping. The default filter is by class name 'sheep'
+# rather than class ID.
+SHEEP_CLASS_ID_COCO = 19  # COCO class ID for sheep (not used by default)
 
 
 # Ground projection defaults
