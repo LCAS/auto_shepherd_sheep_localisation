@@ -64,15 +64,18 @@ def build_rotation_matrix(
     """
     Build a 3D rotation matrix from Euler angles (yaw, pitch, roll).
     
-    Convention: ZYX Euler angles (yaw → pitch → roll)
-    - Yaw: rotation around Z axis (heading)
-    - Pitch: rotation around Y axis (elevation)
-    - Roll: rotation around X axis (bank)
+    Convention for drone/camera frame:
+    - Yaw: rotation around Z axis (vertical), 0° = North, 90° = East
+    - Pitch: rotation around Y axis (lateral), positive = nose/camera up
+    - Roll: rotation around X axis (longitudinal), positive = right side down
+    
+    For camera with gimbal pitch -90° (nadir), we want camera forward (Z-axis)
+    to point downward in world frame (negative Z).
     
     Args:
         yaw_deg: Yaw angle in degrees (0° = North, 90° = East)
-        pitch_deg: Pitch angle in degrees (positive = nose up)
-        roll_deg: Roll angle in degrees (positive = right wing down)
+        pitch_deg: Pitch angle in degrees (positive = up)
+        roll_deg: Roll angle in degrees (positive = right down)
         
     Returns:
         3x3 rotation matrix
@@ -90,6 +93,7 @@ def build_rotation_matrix(
     ])
     
     # Rotation around Y axis (pitch)
+    # For nadir camera: pitch should rotate camera from horizontal to downward
     Ry = np.array([
         [ np.cos(pitch), 0, np.sin(pitch)],
         [ 0,             1, 0            ],
@@ -103,7 +107,7 @@ def build_rotation_matrix(
         [0, np.sin(roll),  np.cos(roll)]
     ])
     
-    # Combined rotation: R = Rz * Ry * Rx
+    # Combined rotation: R = Rz * Ry * Rx (ZYX Euler angles)
     R = Rz @ Ry @ Rx
     
     return R
@@ -120,29 +124,37 @@ def compose_camera_rotation(
     """
     Compose the full camera-to-world rotation from drone and gimbal attitudes.
     
-    The camera is mounted on a 3-axis gimbal on the drone. The total rotation
-    is the composition of the drone's attitude and the gimbal's relative rotation.
+    The camera is mounted on a 3-axis gimbal on the drone. The gimbal pitch
+    controls the camera's vertical angle, where:
+    - 0° = horizontal (forward)
+    - -90° = nadir (straight down)
+    - +90° = zenith (straight up)
     
-    R_world_camera = R_drone * R_gimbal
+    This function inverts the gimbal pitch sign to match the expected behavior
+    where gimbal_pitch = -90° results in the camera pointing downward.
     
     Args:
         drone_yaw_deg: Drone yaw (heading)
         drone_pitch_deg: Drone pitch
         drone_roll_deg: Drone roll
         gimbal_yaw_deg: Gimbal yaw (relative to drone)
-        gimbal_pitch_deg: Gimbal pitch (relative to drone)
+        gimbal_pitch_deg: Gimbal pitch (relative to drone, -90 = nadir)
         gimbal_roll_deg: Gimbal roll (relative to drone)
         
     Returns:
         3x3 rotation matrix from camera frame to world frame (ENU)
     """
-    # Drone rotation (body frame to world frame)
+    # DJI gimbal convention: pitch -90° means camera points down
+    # We need to negate the gimbal pitch to match our rotation convention
+    adjusted_gimbal_pitch = -gimbal_pitch_deg
+    
+    # Build gimbal rotation (camera to gimbal/body frame)
+    R_gimbal = build_rotation_matrix(gimbal_yaw_deg, adjusted_gimbal_pitch, gimbal_roll_deg)
+    
+    # Build drone rotation (drone body to world frame)
     R_drone = build_rotation_matrix(drone_yaw_deg, drone_pitch_deg, drone_roll_deg)
     
-    # Gimbal rotation (camera frame to body frame)
-    R_gimbal = build_rotation_matrix(gimbal_yaw_deg, gimbal_pitch_deg, gimbal_roll_deg)
-    
-    # Combined rotation
+    # Combined rotation: first apply gimbal, then drone
     R_world_camera = R_drone @ R_gimbal
     
     return R_world_camera
@@ -241,8 +253,9 @@ def project_pixel_to_gps(
     """
     Project a pixel coordinate to GPS (lat, lon, alt).
     
-    This is the main entry point for pixel-to-GPS conversion. It combines all
-    the steps: pixel → ray → world ray → ground intersection → GPS.
+    This uses a simplified projection assuming a nadir camera (or nearly nadir).
+    For more accurate results with non-nadir cameras, full 3D ray tracing would
+    be needed.
     
     Args:
         pixel_u: Pixel x-coordinate
@@ -260,51 +273,50 @@ def project_pixel_to_gps(
         logger.error(f"Frame {telemetry.frame_index}: Missing GPS data")
         return None
     
-    if (telemetry.drone_yaw_deg is None or 
-        telemetry.gimbal_pitch_deg is None):
-        logger.error(f"Frame {telemetry.frame_index}: Missing attitude data")
-        return None
+    # For now, use a simplified approach similar to the existing ROS code
+    # This assumes the camera is pointing approximately nadir
     
-    # Step 1: Get camera intrinsics
-    K = camera_config.get_intrinsics()
+    # Get camera FOV
+    fov_rad_h = np.deg2rad(camera_config.fov_deg)
+    # Compute vertical FOV (assuming similar aspect ratio)
+    aspect_ratio = camera_config.image_width_px / camera_config.image_height_px
+    fov_rad_v = 2 * np.arctan(np.tan(fov_rad_h / 2) / aspect_ratio)
     
-    # Step 2: Convert pixel to camera ray
-    ray_camera = pixel_to_camera_ray(pixel_u, pixel_v, K)
+    # Compute ground coverage (assuming nadir view)
+    altitude_agl = telemetry.altitude_m - ground_elev_m - agl_offset_m
+    ground_width_m = 2 * altitude_agl * np.tan(fov_rad_h / 2)
+    ground_height_m = 2 * altitude_agl * np.tan(fov_rad_v / 2)
     
-    # Step 3: Build camera-to-world rotation
-    R_world_camera = compose_camera_rotation(
-        telemetry.drone_yaw_deg,
-        telemetry.drone_pitch_deg or 0.0,
-        telemetry.drone_roll_deg or 0.0,
-        telemetry.gimbal_yaw_deg or 0.0,
-        telemetry.gimbal_pitch_deg,
-        telemetry.gimbal_roll_deg or 0.0
-    )
+    # Ground sample distance (meters per pixel)
+    gsd_x = ground_width_m / camera_config.image_width_px
+    gsd_y = ground_height_m / camera_config.image_height_px
     
-    # Step 4: Transform ray to world frame
-    ray_world = R_world_camera @ ray_camera
+    # Pixel offset from image center
+    center_u = camera_config.image_width_px / 2
+    center_v = camera_config.image_height_px / 2
     
-    # Step 5: Set up ray origin (drone position in ENU frame)
-    # For now, we use the drone's altitude as the z-coordinate
-    # and origin (0, 0) in the local ENU frame
-    ray_origin_enu = np.array([0.0, 0.0, telemetry.altitude_m - ground_elev_m])
+    offset_u = pixel_u - center_u
+    offset_v = center_v - pixel_v  # Invert Y (image coordinates vs. world)
     
-    # Step 6: Intersect ray with ground plane
-    ground_z = agl_offset_m  # Assume ground is AGL offset below drone
-    intersection_enu = ray_plane_intersection(ray_origin_enu, ray_world, ground_z)
+    # Convert to meters
+    offset_east_m = offset_u * gsd_x
+    offset_north_m = offset_v * gsd_y
     
-    if intersection_enu is None:
-        logger.warning(f"Frame {telemetry.frame_index}: Ray-plane intersection failed")
-        return None
+    # Apply rotation based on drone/gimbal yaw
+    yaw_rad = np.deg2rad(telemetry.drone_yaw_deg or 0.0)
     
-    # Step 7: Convert ENU to WGS84
+    # If gimbal yaw is available, use it; otherwise use drone yaw
+    if telemetry.gimbal_yaw_deg is not None:
+        yaw_rad = np.deg2rad(telemetry.gimbal_yaw_deg)
+    
+    # Rotate offsets by yaw
+    east_m = offset_east_m * np.cos(yaw_rad) - offset_north_m * np.sin(yaw_rad)
+    north_m = offset_east_m * np.sin(yaw_rad) + offset_north_m * np.cos(yaw_rad)
+    
+    # Convert to lat/lon
     lat, lon, alt = enu_to_wgs84(
-        intersection_enu[0],
-        intersection_enu[1],
-        intersection_enu[2],
-        telemetry.lat,
-        telemetry.lon,
-        telemetry.altitude_m
+        east_m, north_m, 0.0,
+        telemetry.lat, telemetry.lon, telemetry.altitude_m
     )
     
     logger.debug(f"Frame {telemetry.frame_index}: Pixel ({pixel_u:.1f}, {pixel_v:.1f}) → "

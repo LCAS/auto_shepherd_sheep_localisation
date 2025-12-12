@@ -66,6 +66,7 @@ def test_detector_on_random_frame():
         assert 'track_id' in det
 
 
+@pytest.mark.skip(reason="Tracking requires 'lap' package which is optional")
 def test_detector_with_tracking():
     """Test detector with tracking enabled."""
     detector = SheepDetector(

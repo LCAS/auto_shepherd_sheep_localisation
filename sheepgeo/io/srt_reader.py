@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 class SrtTelemetry(BaseModel):
     """Telemetry data extracted from a single SRT subtitle entry."""
     
+    model_config = {"frozen": False}  # Allow modifications for interpolation
+    
     # Timing
     frame_index: int
     timestamp: timedelta
@@ -51,9 +53,6 @@ class SrtTelemetry(BaseModel):
     # Additional metadata
     focal_length_mm: Optional[float] = None
     color_temp: Optional[int] = None
-    
-    class Config:
-        frozen = False  # Allow modifications for interpolation
 
 
 class SrtReader:
