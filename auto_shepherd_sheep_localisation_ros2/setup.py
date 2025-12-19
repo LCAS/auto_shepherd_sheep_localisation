@@ -8,7 +8,7 @@ pkg = package_name
 setup(
     name=package_name,
     version='0.0.1',
-    packages=[package_name],
+    packages=[package_name, f'{package_name}.localisation'],
     data_files=[
         ('share/ament_index/resource_index/packages', [f'resource/{pkg}']),
         (f'share/{pkg}', ['package.xml']),
@@ -22,7 +22,8 @@ setup(
     entry_points={
         'console_scripts': [
             f'data_loader_node.py = {pkg}.data_loader_node:main',
-            f'detect_sheep.py = {pkg}.detect_sheep:main'
+            f'detect_sheep.py = {pkg}.detect_sheep:main',
+            f'drone_data_node = {pkg}.localisation.drone_data_node:main',
         ],
     },
 )
