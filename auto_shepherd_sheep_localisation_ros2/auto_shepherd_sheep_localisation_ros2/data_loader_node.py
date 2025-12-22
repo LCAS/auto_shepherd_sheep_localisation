@@ -18,19 +18,6 @@ from sensor_msgs.msg import Image, NavSatFix
 
 
 class VideoPublisher(Node):
-    def __init__(self):
-        super().__init__("video_publisher")
-
-        # publishers ---------------------------------------------------------
-        self.image_pub = self.create_publisher(Image, "/drone_feed", 10)
-        self.gps_pub = self.create_publisher(NavSatFix, "/gps", self.qos())
-
-        # subscriber for file paths -----------------------------------------
-        self.create_subscription(String, "/video_filepath", self.path_cb, 10)
-
-        self.bridge = CvBridge()
-        self.playing = False   # only run one video at a time
-
     # latched QoS profile (for GPS)
     def qos(self):
         return QoSProfile(
@@ -74,15 +61,28 @@ class VideoPublisher(Node):
             fix.header.frame_id = "map"
             fix.latitude = 53.2642
             fix.longitude = -0.5327
-            
+
             fix.altitude = 45.24
             self.gps_pub.publish(fix)
 
-            time.sleep(period/10)
+            time.sleep(period / 10)
 
         self.get_logger().info("Completed playback.")
         cap.release()
         self.playing = False
+
+    def __init__(self):
+        super().__init__("video_publisher")
+
+        # publishers ---------------------------------------------------------
+        self.image_pub = self.create_publisher(Image, "/drone_feed", 10)
+        self.gps_pub = self.create_publisher(NavSatFix, "/gps", self.qos())
+
+        # subscriber for file paths -----------------------------------------
+        self.create_subscription(String, "/video_filepath", self.path_cb, 10)
+
+        self.bridge = CvBridge()
+        self.playing = False  # only run one video at a time
 
 
 def main():
