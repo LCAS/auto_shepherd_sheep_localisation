@@ -35,6 +35,8 @@ class DroneDataPublisher(Node):
         self.gimbal_pub = self.create_publisher(Vector3Stamped, f'{topic}/gimbal', 10)
         self.camera_pub = self.create_publisher(String, f'{topic}/camera', 10)
         self.image_pub = self.create_publisher(Image, f'{topic}/image', 10)
+        self.relative_altitude_pub = self.create_publisher(Float32, f'{topic}/relative_altitude', 10)
+        self.absolute_altitude_pub = self.create_publisher(Float32, f'{topic}/absolute_altitude', 10)
 
         self.bridge = CvBridge()
         
@@ -205,7 +207,7 @@ class DroneDataPublisher(Node):
             gps_msg.header.frame_id = 'drone'
             gps_msg.latitude = float(data.get('latitude', 0))
             gps_msg.longitude = float(data.get('longitude', 0))
-            gps_msg.altitude = float(data.get('abs_alt', 0))
+            gps_msg.altitude = float(data.get('rel_alt', 0))  # Use relative altitude for ground distance calculations
             self.gps_pub.publish(gps_msg)
         
         # Speed data
@@ -248,6 +250,18 @@ class DroneDataPublisher(Node):
             camera_msg = String()
             camera_msg.data = ' | '.join(camera_info)
             self.camera_pub.publish(camera_msg)
+        
+        # Relative altitude
+        if 'rel_alt' in data:
+            rel_alt_msg = Float32()
+            rel_alt_msg.data = float(data.get('rel_alt', 0))
+            self.relative_altitude_pub.publish(rel_alt_msg)
+        
+        # Absolute altitude
+        if 'abs_alt' in data:
+            abs_alt_msg = Float32()
+            abs_alt_msg.data = float(data.get('abs_alt', 0))
+            self.absolute_altitude_pub.publish(abs_alt_msg)
 
 
 def main(args=None):

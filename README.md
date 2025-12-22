@@ -23,3 +23,40 @@ This work package is expected to deliver a validated end-to-end system capable o
 
 ## Future Engagement:
 Members of the group will be encouraged to engage with future work exploring multi-species detection, behavioural pattern recognition, and integration with animal health monitoring systems.
+
+---
+
+## Recent Updates (22 Dec 2025)
+
+### Clustering & Visualization Enhancements
+Added real-time sheep clustering and enhanced map visualization capabilities:
+
+#### New Features
+- **Sheep Clustering**: Automatic grouping of nearby sheep (15m radius) with cluster size tracking
+- **Interactive Map Overlays**: Toggle controls for sheep trails, clusters, and camera FOV
+- **Trail History Management**: Configurable history limit (120 points default) to prevent memory growth
+- **Enhanced Sidebar**: Displays cluster count, locations, and sheep per cluster
+- **Multi-layer Maps**: Satellite (default), street, and hybrid view options
+
+#### ROS2 Topics
+**Published:**
+- `/sheep_paths` (nav_msgs/Path): Individual sheep GPS positions with tracking IDs
+- `/sheep_clusters` (nav_msgs/Path): Clustered sheep centroids with cluster sizes
+- `/sheep_detections` (sensor_msgs/Image): Annotated video with bounding boxes and IDs
+
+**Subscribed:**
+- `/drone/gps` (sensor_msgs/NavSatFix): Drone position
+- `/drone/attitude` (geometry_msgs/Vector3Stamped): Drone orientation
+- `/drone/gimbal` (geometry_msgs/Vector3Stamped): Gimbal angles
+- `/drone/image` (sensor_msgs/Image): Raw camera feed
+
+#### Web Interface
+Access the live map at `http://localhost:8080` to view:
+- Real-time sheep positions (orange markers)
+- Movement trails (green polylines)
+- Cluster formations (purple markers scaled by size)
+- Camera field of view (blue polygon)
+- Live annotated video feed
+- Drone telemetry and sheep/cluster lists
+
+See [MAP_VISUALIZER_README.md](auto_shepherd_sheep_localisation_ros2/MAP_VISUALIZER_README.md) for detailed documentation.

@@ -27,7 +27,9 @@ ros2 run auto_shepherd_sheep_localisation_ros2 drone_data_node --ros-args \
 
 ## Published topics
 - `/drone` (`std_msgs/String`: JSON with all fields)
-- `/drone/gps` (`sensor_msgs/NavSatFix`: uses abs_alt, absolute altitude, relative altitude is in `/drone`)
+- `/drone/gps` (`sensor_msgs/NavSatFix`: uses rel_alt, relative altitude)
+- `/drone/relative_altitude` (`std_msgs/Float32`: relative altitude in meters)
+- `/drone/absolute_altitude` (`std_msgs/Float32`: absolute altitude in meters)
 - `/drone/speed` (`geometry_msgs/Vector3Stamped`: drone_speedx/y/z)
 - `/drone/attitude` (`geometry_msgs/Vector3Stamped`: drone_yaw/pitch/roll)
 - `/drone/gimbal` (`geometry_msgs/Vector3Stamped`: gb_yaw/pitch/roll, camera gimbal data)

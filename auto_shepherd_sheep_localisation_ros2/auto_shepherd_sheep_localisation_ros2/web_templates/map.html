@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Shepherd - Live Map</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #map {
+            flex: 1;
+            background: #ddd;
+        }
+        
+        .video-panel {
+            height: 300px;
+            background: #000;
+            border-top: 2px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        .video-panel img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        
+        .video-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .sidebar {
+            width: 300px;
+            background: white;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        
+        .status {
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+        
+        .status.connected {
+            color: #27ae60;
+            font-weight: bold;
+        }
+        
+        .status.disconnected {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+        
+        .section {
+            margin-bottom: 20px;
+        }
+        
+        .section-title {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        
+        .drone-info {
+            background: #e8f4f8;
+            padding: 10px;
+            border-left: 4px solid #3498db;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        
+        .drone-info p {
+            margin: 5px 0;
+            font-family: monospace;
+        }
+        
+        .drone-info .label {
+            color: #555;
+            font-weight: bold;
+        }
+        
+        .drone-info .value {
+            color: #2980b9;
+        }
+        
+        .sheep-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .sheep-item {
+            background: #fff9e6;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-left: 4px solid #f39c12;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        .sheep-item .id {
+            font-weight: bold;
+            color: #e74c3c;
+            margin-bottom: 5px;
+        }
+        
+        .sheep-item p {
+            margin: 3px 0;
+            font-family: monospace;
+            color: #555;
+        }
+        
+        .cluster-item {
+            background: #f3e5f5;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-left: 4px solid #9b59b6;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        .cluster-item .id {
+            font-weight: bold;
+            color: #8e44ad;
+            margin-bottom: 5px;
+        }
+        
+        .cluster-item p {
+            margin: 3px 0;
+            font-family: monospace;
+            color: #555;
+        }
+                .cluster-item {
+            background: #f3e5f5;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-left: 4px solid #9b59b6;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        .cluster-item .id {
+            font-weight: bold;
+            color: #8e44ad;
+            margin-bottom: 5px;
+        }
+        
+        .cluster-item p {
+            margin: 3px 0;
+            font-family: monospace;
+            color: #555;
+        }
+                .legend {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .legend-marker {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .legend-marker.drone {
+            background: #3498db;
+            border: 2px solid #2980b9;
+        }
+        
+        .legend-marker.sheep {
+            background: #f39c12;
+            border: 2px solid #d68910;
+        }
+
+        .legend-marker.cluster {
+            background: #9b59b6;
+            border: 2px solid #8e44ad;
+        }
+        
+        .map-controls {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        
+        .map-controls-title {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .map-button {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 5px;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        
+        .map-button:hover {
+            background: #f0f0f0;
+        }
+        
+        .map-button.active {
+            background: #3498db;
+            color: white;
+            border-color: #2980b9;
+        }
+
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="main-content">
+            <div id="map"></div>
+            <div class="video-panel">
+                <div class="video-label">📹 Live Detection Feed</div>
+                <img src="/video_feed" alt="Live detection feed">
+            </div>
+        </div>
+        
+        <div class="sidebar">
+            <div class="header">
+                <h1>Auto Shepherd</h1>
+                <h1>Sheep Radar 24</h1>
+                <div class="status disconnected" id="status">Connecting...</div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">🚁 Drone Position</div>
+                <div class="drone-info" id="droneInfo">
+                    <p><span class="label">Lat:</span> <span class="value">--</span></p>
+                    <p><span class="label">Lon:</span> <span class="value">--</span></p>
+                    <p><span class="label">Alt:</span> <span class="value">--</span></p>
+                </div>
+            </div>
+            
+            <div class="map-controls">
+                <div class="map-controls-title">🗺️ Map View</div>
+                <button class="map-button" onclick="switchMapLayer('street')">Street Map</button>
+                <button class="map-button active" onclick="switchMapLayer('satellite')">Satellite</button>
+                <button class="map-button" onclick="switchMapLayer('hybrid')">Hybrid</button>
+            </div>
+
+            <div class="map-controls">
+                <div class="map-controls-title">👁️ Overlays</div>
+                <label class="toggle-row"><input type="checkbox" id="toggleTrails" checked onchange="toggleTrails()"> Sheep trails</label>
+                <label class="toggle-row"><input type="checkbox" id="toggleClusters" checked onchange="toggleClusters()"> Sheep clusters</label>
+                <label class="toggle-row"><input type="checkbox" id="toggleFov" checked onchange="toggleFov()"> Camera FOV</label>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">🐑 Detected Sheep (<span id="sheepCount">0</span>)</div>
+                <div class="sheep-list" id="sheepList">
+                    <p style="color: #999; text-align: center; padding: 20px 0;">Waiting for detections...</p>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">🟣 Sheep Clusters (<span id="clusterCount">0</span>)</div>
+                <div class="sheep-list" id="clusterList">
+                    <p style="color: #999; text-align: center; padding: 20px 0;">No clusters detected...</p>
+                </div>
+            </div>
+            
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-marker drone"></div>
+                    <span>Drone</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-marker sheep"></div>
+                    <span>Detected Sheep</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-marker cluster"></div>
+                    <span>Sheep Clusters</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([53.26674766901415, -0.5290177288000211], 16);
+        
+        // Define tile layers
+        const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: 19
+        });
+        
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: '© Esri',
+            maxZoom: 19
+        });
+        
+        const hybridLayer = L.layerGroup([
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: '© Esri',
+                maxZoom: 19
+            }),
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                opacity: 0.3,
+                maxZoom: 19
+            })
+        ]);
+        
+        // Add default layer (satellite)
+        let currentLayer = satelliteLayer;
+        currentLayer.addTo(map);
+        
+        // Function to switch map layers
+        function switchMapLayer(type) {
+            // Remove current layer
+            map.removeLayer(currentLayer);
+            
+            // Switch to new layer
+            if (type === 'street') {
+                currentLayer = streetLayer;
+            } else if (type === 'satellite') {
+                currentLayer = satelliteLayer;
+            } else if (type === 'hybrid') {
+                currentLayer = hybridLayer;
+            }
+            
+            currentLayer.addTo(map);
+            
+            // Update button states
+            document.querySelectorAll('.map-button').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+        
+        // Markers
+        let droneMarker = null;
+        let sheepMarkers = {};
+        let clusterMarkers = {};
+        let cameraFovPolygon = null;
+        let sheepTrails = {};
+        let showTrails = true;
+        let showClusters = true;
+        let showFov = true;
+        let lastData = null;
+        
+        // Socket.IO connection
+        const socket = io();
+        
+        socket.on('connect', function() {
+            document.getElementById('status').textContent = 'Connected';
+            document.getElementById('status').className = 'status connected';
+        });
+        
+        socket.on('disconnect', function() {
+            document.getElementById('status').textContent = 'Disconnected';
+            document.getElementById('status').className = 'status disconnected';
+        });
+        
+        socket.on('map_update', function(data) {
+            lastData = data;
+            // Update drone position
+            if (data.drone) {
+                const lat = data.drone.latitude;
+                const lon = data.drone.longitude;
+                const alt = data.drone.altitude.toFixed(1);
+                
+                // Create/update drone marker
+                if (!droneMarker) {
+                    droneMarker = L.circleMarker([lat, lon], {
+                        radius: 12,
+                        fillColor: '#3498db',
+                        color: '#2980b9',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    }).addTo(map).bindPopup(`<b>Drone</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}<br>Alt: ${alt}m`);
+                } else {
+                    droneMarker.setLatLng([lat, lon]);
+                    droneMarker.setPopupContent(`<b>Drone</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}<br>Alt: ${alt}m`);
+                }
+                
+                // Center map on drone
+                map.setView([lat, lon], map.getZoom());
+                
+                // Update info panel
+                document.querySelector('#droneInfo p:nth-child(1) .value').textContent = lat.toFixed(6);
+                document.querySelector('#droneInfo p:nth-child(2) .value').textContent = lon.toFixed(6);
+                document.querySelector('#droneInfo p:nth-child(3) .value').textContent = alt + ' m';
+            }
+            
+            // Update sheep positions
+            if (data.sheep) {
+                const sheepIds = new Set();
+                
+                for (const sheep of data.sheep) {
+                    sheepIds.add(sheep.id);
+                    const lat = sheep.latitude;
+                    const lon = sheep.longitude;
+                    
+                    if (!sheepMarkers[sheep.id]) {
+                        sheepMarkers[sheep.id] = L.circleMarker([lat, lon], {
+                            radius: 10,
+                            fillColor: '#f39c12',
+                            color: '#d68910',
+                            weight: 2,
+                            opacity: 1,
+                            fillOpacity: 0.8
+                        }).addTo(map).bindPopup(`<b>Sheep ${sheep.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
+                    } else {
+                        sheepMarkers[sheep.id].setLatLng([lat, lon]);
+                        sheepMarkers[sheep.id].setPopupContent(`<b>Sheep ${sheep.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
+                    }
+                }
+                
+                // Remove markers for sheep no longer detected
+                for (const id in sheepMarkers) {
+                    if (!sheepIds.has(id)) {
+                        map.removeLayer(sheepMarkers[id]);
+                        delete sheepMarkers[id];
+                    }
+                }
+                
+                // Update sheep list and count
+                document.getElementById('sheepCount').textContent = sheepIds.size;
+                const sheepListHtml = Array.from(sheepIds)
+                    .map(id => {
+                        const sheep = data.sheep.find(s => s.id === id);
+                        return `
+                            <div class="sheep-item">
+                                <div class="id">Sheep ${sheep.id}</div>
+                                <p><span class="label">Lat:</span> ${sheep.latitude.toFixed(6)}</p>
+                                <p><span class="label">Lon:</span> ${sheep.longitude.toFixed(6)}</p>
+                            </div>
+                        `;
+                    })
+                    .join('');
+                
+                document.getElementById('sheepList').innerHTML = sheepListHtml || 
+                    '<p style="color: #999; text-align: center; padding: 20px 0;">No sheep detected</p>';
+            }
+            
+            // Update cluster list in sidebar
+            if (data.sheep_clusters) {
+                document.getElementById('clusterCount').textContent = data.sheep_clusters.length;
+                const clusterListHtml = data.sheep_clusters
+                    .map(cluster => {
+                        return `
+                            <div class="cluster-item">
+                                <div class="id">${cluster.id}</div>
+                                <p>Lat: ${cluster.latitude.toFixed(6)}</p>
+                                <p>Lon: ${cluster.longitude.toFixed(6)}</p>
+                                <p>Size: ${cluster.size} sheep</p>
+                            </div>
+                        `;
+                    })
+                    .join('');
+                
+                document.getElementById('clusterList').innerHTML = clusterListHtml || 
+                    '<p style="color: #999; text-align: center; padding: 20px 0;">No clusters detected</p>';
+            } else {
+                document.getElementById('clusterCount').textContent = '0';
+                document.getElementById('clusterList').innerHTML = 
+                    '<p style="color: #999; text-align: center; padding: 20px 0;">No clusters detected</p>';
+            }
+
+            // Update sheep clusters
+            if (showClusters) {
+                const clusters = data.sheep_clusters || [];
+                const clusterIds = new Set();
+                for (const cluster of clusters) {
+                    clusterIds.add(cluster.id);
+                    const lat = cluster.latitude;
+                    const lon = cluster.longitude;
+                    const size = cluster.size || 0;
+                    const radius = Math.min(20, 8 + size * 2);
+
+                    if (!clusterMarkers[cluster.id]) {
+                        clusterMarkers[cluster.id] = L.circleMarker([lat, lon], {
+                            radius: radius,
+                            fillColor: '#9b59b6',
+                            color: '#8e44ad',
+                            weight: 2,
+                            opacity: 1,
+                            fillOpacity: 0.6
+                        }).addTo(map).bindPopup(`<b>Cluster ${cluster.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}<br>Size: ${size}`);
+                        clusterMarkers[cluster.id].bringToFront();
+                    } else {
+                        clusterMarkers[cluster.id].setLatLng([lat, lon]);
+                        clusterMarkers[cluster.id].setStyle({ radius: radius });
+                        clusterMarkers[cluster.id].setPopupContent(`<b>Cluster ${cluster.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}<br>Size: ${size}`);
+                        clusterMarkers[cluster.id].bringToFront();
+                    }
+                }
+
+                for (const id in clusterMarkers) {
+                    if (!clusterIds.has(id)) {
+                        map.removeLayer(clusterMarkers[id]);
+                        delete clusterMarkers[id];
+                    }
+                }
+            } else {
+                for (const id in clusterMarkers) {
+                    map.removeLayer(clusterMarkers[id]);
+                    delete clusterMarkers[id];
+                }
+            }
+            
+            // Update sheep paths/trails
+            if (data.sheep_paths && showTrails) {
+                for (const [sheepId, path] of Object.entries(data.sheep_paths)) {
+                    if (path.length < 2) continue;
+                    if (!sheepTrails[sheepId]) {
+                        sheepTrails[sheepId] = L.polyline(path, {
+                            color: '#2ecc71',
+                            weight: 3,
+                            opacity: 0.7
+                        }).addTo(map);
+                    } else {
+                        sheepTrails[sheepId].setLatLngs(path);
+                    }
+                }
+            } else if (!showTrails) {
+                // Remove all trails when hidden
+                for (const id in sheepTrails) {
+                    map.removeLayer(sheepTrails[id]);
+                    delete sheepTrails[id];
+                }
+            }
+            
+            // Update camera FOV polygon
+            if (showFov && data.camera_fov && data.camera_fov.length === 4) {
+                if (!cameraFovPolygon) {
+                    cameraFovPolygon = L.polygon(data.camera_fov, {
+                        color: '#3498db',
+                        fillColor: '#3498db',
+                        fillOpacity: 0.15,
+                        weight: 2,
+                        dashArray: '5, 10'
+                    }).addTo(map).bindPopup('<b>Camera Field of View</b>');
+                } else {
+                    cameraFovPolygon.setLatLngs(data.camera_fov);
+                }
+            } else if (!showFov && cameraFovPolygon) {
+                map.removeLayer(cameraFovPolygon);
+                cameraFovPolygon = null;
+            }
+        });
+
+        function toggleTrails() {
+            showTrails = document.getElementById('toggleTrails').checked;
+            if (!showTrails) {
+                for (const id in sheepTrails) {
+                    map.removeLayer(sheepTrails[id]);
+                    delete sheepTrails[id];
+                }
+            } else if (lastData) {
+                // Re-render trails from last data
+                if (lastData.sheep_paths) {
+                    for (const [sheepId, path] of Object.entries(lastData.sheep_paths)) {
+                        if (path.length < 2) continue;
+                        sheepTrails[sheepId] = L.polyline(path, {
+                            color: '#2ecc71',
+                            weight: 3,
+                            opacity: 0.7
+                        }).addTo(map);
+                    }
+                }
+            }
+        }
+
+        function toggleClusters() {
+            showClusters = document.getElementById('toggleClusters').checked;
+            if (!showClusters) {
+                for (const id in clusterMarkers) {
+                    map.removeLayer(clusterMarkers[id]);
+                    delete clusterMarkers[id];
+                }
+            } else if (lastData && lastData.sheep_clusters) {
+                for (const cluster of lastData.sheep_clusters) {
+                    const lat = cluster.latitude;
+                    const lon = cluster.longitude;
+                    const size = cluster.size || 0;
+                    const radius = Math.min(20, 8 + size * 2);
+
+                    clusterMarkers[cluster.id] = L.circleMarker([lat, lon], {
+                        radius: radius,
+                        fillColor: '#9b59b6',
+                        color: '#8e44ad',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.6
+                    }).addTo(map).bindPopup(`<b>Cluster ${cluster.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}<br>Size: ${size}`);
+                    clusterMarkers[cluster.id].bringToFront();
+                }
+            }
+        }
+
+        function toggleFov() {
+            showFov = document.getElementById('toggleFov').checked;
+            if (!showFov && cameraFovPolygon) {
+                map.removeLayer(cameraFovPolygon);
+                cameraFovPolygon = null;
+            } else if (showFov && lastData && lastData.camera_fov && lastData.camera_fov.length === 4) {
+                if (!cameraFovPolygon) {
+                    cameraFovPolygon = L.polygon(lastData.camera_fov, {
+                        color: '#3498db',
+                        fillColor: '#3498db',
+                        fillOpacity: 0.15,
+                        weight: 2,
+                        dashArray: '5, 10'
+                    }).addTo(map).bindPopup('<b>Camera Field of View</b>');
+                } else {
+                    cameraFovPolygon.setLatLngs(lastData.camera_fov);
+                }
+            }
+        }
+    </script>
+</body>
+</html>

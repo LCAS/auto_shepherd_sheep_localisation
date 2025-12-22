@@ -103,7 +103,10 @@ RUN python3 -m pip install --no-cache-dir --upgrade \
     "scipy==1.12.*" \
     tmule==1.5.9 \
     pyserial \
-    ultralytics
+    ultralytics \
+    flask \
+    flask-socketio \
+    python-socketio
 
 
 # ──────────────────────────────
