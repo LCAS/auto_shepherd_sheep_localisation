@@ -11,7 +11,7 @@ import math
 
 import threading
 import json
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, send_from_directory
 from flask_socketio import SocketIO, emit
 
 
@@ -279,6 +279,10 @@ class MapVisualizer(Node):
         @self.app.route("/")
         def index():
             return render_template("map.html")
+
+        @self.app.route("/static/<path:filename>")
+        def serve_static(filename):
+            return send_from_directory(os.path.join(pkg_dir, "web_static"), filename)
 
         @self.app.route("/video_feed")
         def video_feed():
