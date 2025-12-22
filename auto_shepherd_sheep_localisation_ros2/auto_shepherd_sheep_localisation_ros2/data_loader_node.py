@@ -41,8 +41,11 @@ class VideoPublisher(Node):
 
     # callback: start video thread
     def path_cb(self, msg: String):
+        self.get_logger().info(f"Recieved request to play: {msg.data}")
         if self.playing:
+            self.get_logger().info("Ignoring recieved request.")
             return
+        self.get_logger().info("Started playing...")
         threading.Thread(target=self.play_video, args=(msg.data,), daemon=True).start()
 
     # read video frames and publish
@@ -69,13 +72,15 @@ class VideoPublisher(Node):
             fix = NavSatFix()
             fix.header.stamp = stamp
             fix.header.frame_id = "map"
-            fix.latitude = 53.01020
-            fix.longitude = -0.53434
+            fix.latitude = 53.2642
+            fix.longitude = -0.5327
+            
             fix.altitude = 45.24
             self.gps_pub.publish(fix)
 
-            time.sleep(period)
+            time.sleep(period/10)
 
+        self.get_logger().info("Completed playback.")
         cap.release()
         self.playing = False
 
