@@ -10,7 +10,6 @@ import cv2
 import math
 
 import threading
-import json
 from flask import Flask, render_template, Response, send_from_directory
 from flask_socketio import SocketIO, emit
 
