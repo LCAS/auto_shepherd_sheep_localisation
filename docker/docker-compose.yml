@@ -28,3 +28,6 @@ services:
       - BASE_WS=/home/ros/base_ws
       - DISPLAY=:0
       - QT_X11_NO_MITSHM=1
+
+    ports:
+      - "8080:8080"

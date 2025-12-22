@@ -1,9 +1,17 @@
-
 #####################
 # YOLO SHEEP DETECT #
 #################################################################################
 
-YOLO_WEIGHTS_SHEEP = 'models/Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt'
+import os
+
+# Get the path to the models directory relative to this config file
+_module_dir = os.path.dirname(os.path.abspath(__file__))
+_parent_dir = os.path.dirname(_module_dir)
+YOLO_WEIGHTS_SHEEP = os.path.join(
+    _parent_dir, "models", "sample_models", "sample_model", "Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
+)
+
+YOLO_TRACKER = os.path.join(_module_dir, "bytetrack.yaml")
 
 SC = 0.1  # confidence threshold for sheep detection
 SIOU = 0.5  # IoU threshold for sheep detection (Allow overlap)
@@ -17,7 +25,7 @@ SS = False  # stream for sheep detection
 #################################################################################
 
 # Path to video to make inference upon
-VIDEOPATH = 'clips1/DJI_20250617141927_0001_S.MP4'
+VIDEOPATH = "clips1/DJI_20250617141927_0001_S.MP4"
 ###########
 # MATCHER #
 #################################################################################
@@ -64,4 +72,4 @@ TNN = 100
 TOTC = True
 
 # embedder
-TEM = 'mobilenet'
+TEM = "mobilenet"
