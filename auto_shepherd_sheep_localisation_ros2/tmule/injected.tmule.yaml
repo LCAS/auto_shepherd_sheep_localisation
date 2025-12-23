@@ -20,15 +20,19 @@ init_cmd: |
   #https://lcas.lincoln.ac.uk/nextcloud/index.php/s/fCtzXNM74PktaGg
   PKG="/home/ros/base_ws/src/auto_shepherd_sheep_localisation_ros2"
   DP="$PKG/auto_shepherd_sheep_localisation_ros2/detection_process"
-  export YOLO_WEIGHTS="$DP/models/sample_models/Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
+
+  export VIDEO_PATH="$DP/models/samples/sample_clip/video.mp4"
+  export VDEO_SRT_PATH="$DP/models/samples/sample_clip/video.srt"
+
+  export YOLO_WEIGHTS="$DP/models/samples/sample_model/Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
   export YOLO_TRACKER="$DP/modules/bytetrack.yaml"
-  export SAMPLE_VIDEO="$DP/samples/DJI_0311_a_72m.MP4"
 
 windows:
 
   - name: outputs
     panes:
       - rviz2
+      - ros2 run auto_shepherd_sheep_localisation_ros2 map_visualiser_node.py
 
   - name: system
     panes:
@@ -36,5 +40,4 @@ windows:
 
   - name: inputs
     panes:
-      - ros2 run auto_shepherd_sheep_localisation_ros2 data_loader_node.py
-      - "ros2 topic pub /video_filepath std_msgs/msg/String \"data: '$SAMPLE_VIDEO'\""
+      - ros2 run auto_shepherd_sheep_localisation_ros2 data_loader_node.py --ros-args -p loop_video:=true -p video_path:=$VIDEO_PATH -p srt_path:=$VDEO_SRT_PATH

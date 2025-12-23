@@ -106,7 +106,8 @@ RUN python3 -m pip install --no-cache-dir --upgrade \
     ultralytics \
     flask \
     flask-socketio \
-    python-socketio
+    python-socketio \
+    lap
 
 
 # ──────────────────────────────
