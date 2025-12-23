@@ -10,7 +10,6 @@ setup(
     version="0.0.1",
     packages=[
         package_name,
-        f"{package_name}.localisation",
         f"{package_name}.detection_process",
         f"{package_name}.detection_process.modules",
     ],
