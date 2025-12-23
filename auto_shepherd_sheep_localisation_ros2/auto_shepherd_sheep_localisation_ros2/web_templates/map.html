@@ -271,7 +271,7 @@
     <div class="container">
         <div class="main-content">
             <div id="map"></div>
-            <div class="video-panel">
+            <div class="video-panel" id="videoPanel">
                 <div class="video-label">📹 Live Detection Feed</div>
                 <img src="/video_feed" alt="Live detection feed">
             </div>
@@ -299,6 +299,7 @@
                 <button class="map-button" onclick="switchMapLayer('street')">Street Map</button>
                 <button class="map-button active" onclick="switchMapLayer('satellite')">Satellite</button>
                 <button class="map-button" onclick="switchMapLayer('hybrid')">Hybrid</button>
+                <label class="toggle-row"><input type="checkbox" id="toggleCenter" checked onchange="toggleCenter()"> Auto-center on drone</label>
             </div>
 
             <div class="map-controls">
@@ -306,6 +307,8 @@
                 <label class="toggle-row"><input type="checkbox" id="toggleTrails" checked onchange="toggleTrails()"> Sheep trails</label>
                 <label class="toggle-row"><input type="checkbox" id="toggleClusters" checked onchange="toggleClusters()"> Sheep clusters</label>
                 <label class="toggle-row"><input type="checkbox" id="toggleFov" checked onchange="toggleFov()"> Camera FOV</label>
+                <label class="toggle-row"><input type="checkbox" id="toggleVideoOverlay" checked onchange="toggleVideoOverlay()"> Video overlay</label>
+                <label class="toggle-row"><input type="checkbox" id="toggleVideoPanel" checked onchange="toggleVideoPanel()"> Video panel</label>
             </div>
             
             <div class="section">
@@ -395,11 +398,29 @@
         let sheepMarkers = {};
         let clusterMarkers = {};
         let cameraFovPolygon = null;
+        let videoOverlayCanvas = null;
         let sheepTrails = {};
         let showTrails = true;
         let showClusters = true;
         let showFov = true;
+        let showVideoOverlay = true;
+        let showVideoPanel = true;
+        let centerOnDrone = true;
         let lastData = null;
+        
+        // Video element for MJPEG stream
+        let videoElement = document.createElement('video');
+        videoElement.autoplay = true;
+        videoElement.muted = true;
+        videoElement.style.display = 'none';
+        document.body.appendChild(videoElement);
+        
+        // Create a hidden img element to capture video frames
+        let videoFrameImg = document.createElement('img');
+        videoFrameImg.style.display = 'none';
+        videoFrameImg.crossOrigin = 'anonymous';
+        videoFrameImg.src = '/video_feed';
+        document.body.appendChild(videoFrameImg);
         
         // Socket.IO connection
         const socket = io();
@@ -437,8 +458,10 @@
                     droneMarker.setPopupContent(`<b>Drone</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}<br>Alt: ${alt}m`);
                 }
                 
-                // Center map on drone
-                map.setView([lat, lon], map.getZoom());
+                // Center map on drone if enabled
+                if (centerOnDrone) {
+                    map.setView([lat, lon], map.getZoom());
+                }
                 
                 // Update info panel
                 document.querySelector('#droneInfo p:nth-child(1) .value').textContent = lat.toFixed(6);
@@ -602,6 +625,21 @@
                 map.removeLayer(cameraFovPolygon);
                 cameraFovPolygon = null;
             }
+            
+            // Update video overlay polygon (same shape as FOV)
+            if (showVideoOverlay && data.camera_fov && data.camera_fov.length === 4) {
+                if (!videoOverlayCanvas) {
+                    videoOverlayCanvas = L.canvasOverlay().addTo(map);
+                }
+                // Store FOV corners for perspective transform
+                videoOverlayCanvas.fovCorners = data.camera_fov;
+                videoOverlayCanvas.dronePos = data.drone ? [data.drone.latitude, data.drone.longitude] : null;
+                // Update overlay
+                videoOverlayCanvas.redraw();
+            } else if (!showVideoOverlay && videoOverlayCanvas) {
+                map.removeLayer(videoOverlayCanvas);
+                videoOverlayCanvas = null;
+            }
         });
 
         function toggleTrails() {
@@ -671,6 +709,174 @@
                     cameraFovPolygon.setLatLngs(lastData.camera_fov);
                 }
             }
+        }
+
+        function toggleVideoOverlay() {
+            showVideoOverlay = document.getElementById('toggleVideoOverlay').checked;
+            if (!showVideoOverlay && videoOverlayCanvas) {
+                map.removeLayer(videoOverlayCanvas);
+                videoOverlayCanvas = null;
+            } else if (showVideoOverlay && lastData && lastData.camera_fov && lastData.camera_fov.length === 4) {
+                if (!videoOverlayCanvas) {
+                    videoOverlayCanvas = L.canvasOverlay().addTo(map);
+                }
+                videoOverlayCanvas.fovCorners = lastData.camera_fov;
+                videoOverlayCanvas.dronePos = lastData.drone ? [lastData.drone.latitude, lastData.drone.longitude] : null;
+                videoOverlayCanvas.redraw();
+            }
+        }
+
+        function toggleVideoPanel() {
+            showVideoPanel = document.getElementById('toggleVideoPanel').checked;
+            const panel = document.getElementById('videoPanel');
+            if (!panel) return;
+            panel.style.display = showVideoPanel ? 'flex' : 'none';
+        }
+
+        function toggleCenter() {
+            centerOnDrone = document.getElementById('toggleCenter').checked;
+            if (centerOnDrone && lastData && lastData.drone) {
+                const lat = lastData.drone.latitude;
+                const lon = lastData.drone.longitude;
+                map.setView([lat, lon], map.getZoom());
+            }
+        }
+        
+        // Custom canvas overlay for video
+        L.CanvasOverlay = L.Layer.extend({
+            initialize: function() {
+                this.canvas = document.createElement('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.fovCorners = null;
+                this.dronePos = null;
+                this._animFrame = null;
+            },
+            
+            onAdd: function(map) {
+                this._map = map;
+                const pane = map.getPanes().overlayPane;
+                pane.appendChild(this.canvas);
+                this.canvas.style.position = 'absolute';
+                this.canvas.style.pointerEvents = 'none';
+                map.on('moveend zoomend', this._reset, this);
+                this._reset();
+                this._animate();
+            },
+            
+            onRemove: function() {
+                if (this._animFrame) {
+                    cancelAnimationFrame(this._animFrame);
+                }
+                this.canvas.parentNode.removeChild(this.canvas);
+                this._map.off('moveend zoomend', this._reset, this);
+            },
+            
+            _reset: function() {
+                if (!this.fovCorners || !this._map || this.fovCorners.length !== 4) return;
+                
+                const bounds = L.latLngBounds(this.fovCorners);
+                const topLeft = this._map.latLngToLayerPoint(bounds.getNorthWest());
+                const size = this._map.latLngToLayerPoint(bounds.getSouthEast()).subtract(topLeft);
+                
+                L.DomUtil.setPosition(this.canvas, topLeft);
+                this.canvas.width = size.x;
+                this.canvas.height = size.y;
+            },
+            
+            _animate: function() {
+                this._draw();
+                this._animFrame = requestAnimationFrame(this._animate.bind(this));
+            },
+            
+            _draw: function() {
+                if (!this.fovCorners || !this._map || this.fovCorners.length !== 4) return;
+                if (!videoFrameImg.complete || !videoFrameImg.naturalWidth) return;
+                
+                const bounds = L.latLngBounds(this.fovCorners);
+                const topLeft = this._map.latLngToLayerPoint(bounds.getNorthWest());
+                
+                // Convert FOV corners to canvas coordinates
+                const corners = this.fovCorners.map(latlng => {
+                    const point = this._map.latLngToLayerPoint(latlng);
+                    return {
+                        x: point.x - topLeft.x,
+                        y: point.y - topLeft.y
+                    };
+                });
+                
+                // Clear canvas
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.ctx.globalAlpha = 0.7;
+                
+                // Simple quad rendering using two triangles
+                this._drawTexturedQuad(videoFrameImg, corners);
+            },
+            
+            _drawTexturedQuad: function(img, corners) {
+                // Draw using perspective-like transform
+                // Split quad into two triangles and use drawImage with transform
+                // Map bottom of video to closest edge to drone (corners[0] and corners[1])
+                
+                const ctx = this.ctx;
+                
+                // Triangle 1: bottom-left video -> top-left FOV, bottom-right video -> top-right FOV, top-left video -> bottom-left FOV
+                this._drawTexturedTriangle(img, 
+                    [0, img.height], [img.width, img.height], [0, 0],
+                    corners[0], corners[1], corners[3]
+                );
+                
+                // Triangle 2: bottom-right video -> top-right FOV, top-right video -> bottom-right FOV, top-left video -> bottom-left FOV
+                this._drawTexturedTriangle(img,
+                    [img.width, img.height], [img.width, 0], [0, 0],
+                    corners[1], corners[2], corners[3]
+                );
+            },
+            
+            _drawTexturedTriangle: function(img, src0, src1, src2, dst0, dst1, dst2) {
+                const ctx = this.ctx;
+                
+                // Calculate affine transform matrix
+                const x0 = src0[0], y0 = src0[1];
+                const x1 = src1[0], y1 = src1[1];
+                const x2 = src2[0], y2 = src2[1];
+                
+                const u0 = dst0.x, v0 = dst0.y;
+                const u1 = dst1.x, v1 = dst1.y;
+                const u2 = dst2.x, v2 = dst2.y;
+                
+                const denom = (x0 * (y1 - y2) + x1 * (y2 - y0) + x2 * (y0 - y1));
+                
+                if (Math.abs(denom) < 1e-10) return;
+                
+                const a = (u0 * (y1 - y2) + u1 * (y2 - y0) + u2 * (y0 - y1)) / denom;
+                const b = (v0 * (y1 - y2) + v1 * (y2 - y0) + v2 * (y0 - y1)) / denom;
+                const c = (u0 * (x2 - x1) + u1 * (x0 - x2) + u2 * (x1 - x0)) / denom;
+                const d = (v0 * (x2 - x1) + v1 * (x0 - x2) + v2 * (x1 - x0)) / denom;
+                const e = (u0 * (x1 * y2 - x2 * y1) + u1 * (x2 * y0 - x0 * y2) + u2 * (x0 * y1 - x1 * y0)) / denom;
+                const f = (v0 * (x1 * y2 - x2 * y1) + v1 * (x2 * y0 - x0 * y2) + v2 * (x0 * y1 - x1 * y0)) / denom;
+                
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(dst0.x, dst0.y);
+                ctx.lineTo(dst1.x, dst1.y);
+                ctx.lineTo(dst2.x, dst2.y);
+                ctx.closePath();
+                ctx.clip();
+                
+                ctx.transform(a, b, c, d, e, f);
+                ctx.drawImage(img, 0, 0);
+                ctx.restore();
+            },
+            
+            redraw: function() {
+                if (this._map) {
+                    this._reset();
+                }
+            }
+        });
+        
+        L.canvasOverlay = function() {
+            return new L.CanvasOverlay();
         }
     </script>
 </body>

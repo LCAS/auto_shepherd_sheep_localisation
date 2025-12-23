@@ -65,8 +65,8 @@ class SheepDetectROS:
         focal_length = (
             camera.get("focal_len", 4.5) if camera else 4.5
         )  # mm - Zenmuse H20
-        sensor_width = 6.17  # mm - Zenmuse H20
-        sensor_height = 4.55  # mm - Zenmuse H20
+        sensor_width = 5.4 # 6.17  # mm - Zenmuse H20
+        sensor_height = 3.0 # 3.47 # 4.55  # mm - Zenmuse H20
 
         # Frame should be openCV format
         h, w = frame.shape[:2]

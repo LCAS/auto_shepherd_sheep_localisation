@@ -17,7 +17,10 @@ setup(
     package_data={
         package_name: [
             "detection_process/models/*.pt",
+            "detection_process/models/**/*.pt",
             "detection_process/modules/*.yaml",
+            "web_templates/*.html",
+            "web_static/*",
         ],
     },
     data_files=[
@@ -27,7 +30,7 @@ setup(
         (f"share/{pkg}", ["package.xml"]),
     ],
     install_requires=["setuptools", "flask", "flask-socketio", "python-socketio"],
-    zip_safe=True,
+    zip_safe=False,
     maintainer="james",
     maintainer_email="primordia@live.com",
     description="TODO: Package description",
@@ -36,8 +39,8 @@ setup(
         "console_scripts": [
             f"data_loader_node.py = {pkg}.data_loader_node:main",
             f"detect_sheep.py = {pkg}.detect_sheep:main",
-            f"drone_data_node = {pkg}.localisation.drone_data_node:main",
-            f"map_visualizer_node = {pkg}.map_visualizer_node:main",
+            f"drone_data_node.py = {pkg}.localisation.drone_data_node:main",
+            f"map_visualiser_node.py = {pkg}.map_visualiser_node:main",
         ],
     },
 )

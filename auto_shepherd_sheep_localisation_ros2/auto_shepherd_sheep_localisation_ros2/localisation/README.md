@@ -13,12 +13,12 @@ Publishes DJI video-aligned telemetry plus video frames from SRT+MP4.
 cd ~/base_ws
 colcon build --packages-select auto_shepherd_sheep_localisation_ros2
 source install/setup.bash
-ros2 run auto_shepherd_sheep_localisation_ros2 drone_data_node
+ros2 run auto_shepherd_sheep_localisation_ros2 drone_data_node.py
 ```
 
 ## Run (custom files / options)
 ```bash
-ros2 run auto_shepherd_sheep_localisation_ros2 drone_data_node --ros-args \
+ros2 run auto_shepherd_sheep_localisation_ros2 drone_data_node.py --ros-args \
   -p video_path:=/path/to/video.mp4 \
   -p srt_path:=/path/to/video.srt \
   -p topic_name:=drone \

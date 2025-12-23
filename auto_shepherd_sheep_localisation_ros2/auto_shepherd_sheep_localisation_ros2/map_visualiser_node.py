@@ -14,7 +14,7 @@ from flask import Flask, render_template, Response, send_from_directory
 from flask_socketio import SocketIO
 
 
-class MapVisualizer(Node):
+class MapVisualiser(Node):
     def gps_cb(self, msg: NavSatFix):
         with self.lock:
             self.drone_gps = {
@@ -227,9 +227,9 @@ class MapVisualizer(Node):
             self.get_logger().warn(f"Failed to send update: {e}")
 
     def __init__(self):
-        super().__init__("map_visualizer")
+        super().__init__("map_visualiser")
 
-        self.get_logger().info("🗺️ Map Visualizer Node Starting...")
+        self.get_logger().info("🗺️ Map Visualiser Node Starting...")
 
         # Store latest data
         self.drone_gps = None
@@ -248,8 +248,8 @@ class MapVisualizer(Node):
 
         # Camera specs (Zenmuse H20)
         self.focal_length = 4.5  # mm
-        self.sensor_width = 6.17  # mm
-        self.sensor_height = 4.55  # mm
+        self.sensor_width = 5.4 # 6.17  # mm
+        self.sensor_height = 3.0 # 3.47 # 4.55  # mm
         self.image_width = 1920
         self.image_height = 1080
 
@@ -304,12 +304,12 @@ class MapVisualizer(Node):
         self.flask_thread.daemon = True
         self.flask_thread.start()
 
-        self.get_logger().info("✅ Map Visualizer Ready - Open http://localhost:8080")
+        self.get_logger().info("✅ Map Visualiser Ready - Open http://localhost:8080")
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = MapVisualizer()
+    node = MapVisualiser()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
