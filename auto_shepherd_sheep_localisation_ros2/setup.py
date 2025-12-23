@@ -39,7 +39,6 @@ setup(
         "console_scripts": [
             f"data_loader_node.py = {pkg}.data_loader_node:main",
             f"detect_sheep.py = {pkg}.detect_sheep:main",
-            f"drone_data_node.py = {pkg}.localisation.drone_data_node:main",
             f"map_visualiser_node.py = {pkg}.map_visualiser_node:main",
         ],
     },
