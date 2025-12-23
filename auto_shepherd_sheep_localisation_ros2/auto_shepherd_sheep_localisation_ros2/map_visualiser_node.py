@@ -2,9 +2,10 @@
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import NavSatFix, Image
 from nav_msgs.msg import Path
-from geometry_msgs.msg import Vector3Stamped
+from geometry_msgs.msg import Vector3Stamped, PoseStamped
 from cv_bridge import CvBridge
 import cv2
 import math
@@ -12,6 +13,7 @@ import math
 import threading
 from flask import Flask, render_template, Response, send_from_directory
 from flask_socketio import SocketIO
+from auto_shepherd_sheep_localisation_ros2.utils.geo_converter import MapConverter
 
 
 class MapVisualiser(Node):
@@ -82,6 +84,90 @@ class MapVisualiser(Node):
             self.sheep_clusters = clusters
         self._send_update()
 
+    def sheep_sim_cb(self, msg: Path):
+        with self.lock:
+            self.sheep_sim_positions.clear()
+            for pose in msg.poses:
+                sheep_id = pose.header.frame_id  # ID stored in frame_id
+                lat = pose.pose.position.x
+                lon = pose.pose.position.y
+                self.sheep_sim_positions[sheep_id] = {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "id": sheep_id,
+                }
+        self._send_update()
+
+    def _gps_fence_cb(self, msg: Path):
+        """Initialize MapConverter when field boundary is received"""
+        if self.map_converter is None and len(msg.poses) > 0:
+            # Convert boundary points to list of (lat, lon) tuples
+            boundary_coords = [
+                (p.pose.position.x, p.pose.position.y) for p in msg.poses
+            ]
+            self.map_converter = MapConverter(boundary_coords)
+            self.get_logger().info(f"MapConverter initialized with {len(boundary_coords)} boundary points")
+            # Convert any pending goal now that converter is available
+            if self.pending_sheep_goal is not None:
+                try:
+                    x_meters, y_meters = self.pending_sheep_goal
+                    lat, lon = self.map_converter.xy_to_latlon(y_meters, x_meters)
+                    with self.lock:
+                        self.sheep_goal = {"latitude": lat, "longitude": lon}
+                        self.pending_sheep_goal = None
+                    self._send_update()
+                    self.get_logger().info("Converted pending sheep goal after MapConverter init")
+                except Exception as e:
+                    self.get_logger().warn(f"Failed to convert pending goal after MapConverter init: {e}")
+
+    def sheep_goal_cb(self, msg: PoseStamped):
+        """Callback for sheep herding goal position (XY in meters)"""
+        # Extract XY coordinates (meters)
+        x_meters = msg.pose.position.x
+        y_meters = msg.pose.position.y
+
+        # If converter is not ready, store pending goal and wait for boundary
+        if self.map_converter is None:
+            with self.lock:
+                self.pending_sheep_goal = (x_meters, y_meters)
+            self.get_logger().warn("sheep_goal_cb: MapConverter not ready — storing pending goal until boundary received")
+            return
+
+        # Convert XY coordinates to GPS
+        try:
+            lat, lon = self.map_converter.xy_to_latlon(y_meters, x_meters)
+            with self.lock:
+                self.sheep_goal = {"latitude": lat, "longitude": lon}
+            self._send_update()
+        except Exception as e:
+            self.get_logger().warn(f"Failed to convert goal XY to GPS: {e}")
+
+    def dog_command_cb(self, msg: PoseStamped):
+        """Callback for dog/drone command positions (XY in meters)"""
+        if self.map_converter is None:
+            self.get_logger().warn("dog_command_cb: map_converter not initialized yet (waiting for field boundary)")
+            return  # Need field boundary first
+        
+        # Convert XY coordinates to GPS using map converter
+        x_meters = msg.pose.position.x
+        y_meters = msg.pose.position.y
+        
+        try:
+            lat, lon = self.map_converter.xy_to_latlon(y_meters, x_meters)
+            
+            with self.lock:
+                self.dog_position = {
+                    "latitude": lat,
+                    "longitude": lon
+                }
+                # Add to history trail (limit to last 100 points)
+                self.dog_history.append([lat, lon])
+                if len(self.dog_history) > 100:
+                    self.dog_history.pop(0)
+            
+            self._send_update()
+        except Exception as e:
+            self.get_logger().warn(f"Failed to convert dog XY to GPS: {e}")
     def video_cb(self, msg: Image):
         """Store latest detection frame"""
         try:
@@ -218,13 +304,37 @@ class MapVisualiser(Node):
                 data = {
                     "drone": self.drone_gps,
                     "sheep": list(self.sheep_positions.values()),
+                    "sheep_sim": list(self.sheep_sim_positions.values()),
                     "sheep_clusters": self.sheep_clusters,
+                    "sheep_goal": self.sheep_goal,
                     "camera_fov": self.camera_fov_corners,
                     "sheep_paths": self.sheep_history,
+                    "dog_position": self.dog_position,
+                    "dog_trail": self.dog_history,
                 }
             self.socketio.emit("map_update", data, to=None)
         except Exception as e:
             self.get_logger().warn(f"Failed to send update: {e}")
+
+    def _publish_boundary(self, coords):
+        """Publish field boundary as Path message on /field/gps_fence/path"""
+        try:
+            path_msg = Path()
+            path_msg.header.stamp = self.get_clock().now().to_msg()
+            path_msg.header.frame_id = "map"
+            
+            for lat, lon in coords:
+                pose = PoseStamped()
+                pose.header = path_msg.header
+                pose.pose.position.x = lat
+                pose.pose.position.y = lon
+                pose.pose.position.z = 0.0
+                path_msg.poses.append(pose)
+            
+            self.boundary_pub.publish(path_msg)
+            self.get_logger().info(f"Published boundary with {len(coords)} points to /field/gps_fence/path")
+        except Exception as e:
+            self.get_logger().error(f"Failed to publish boundary: {e}")
 
     def __init__(self):
         super().__init__("map_visualiser")
@@ -235,6 +345,11 @@ class MapVisualiser(Node):
         self.drone_gps = None
         self.sheep_positions = {}  # {sheep_id: (lat, lon)}
         self.sheep_history = {}  # {sheep_id: [[lat, lon], ...]}
+        self.sheep_sim_positions = {}  # {sheep_id: (lat, lon)} - simulated sheep
+        self.sheep_goal = None  # {'latitude': float, 'longitude': float} - herding goal
+        self.dog_position = None  # {'latitude': float, 'longitude': float}
+        self.dog_history = []  # [[lat, lon], ...] - dog path trail
+        self.map_converter = None  # Initialized when field boundary is received
         self.sheep_clusters = (
             []
         )  # [{'id': str, 'latitude': float, 'longitude': float, 'size': int}]
@@ -245,6 +360,7 @@ class MapVisualiser(Node):
         self.lock = threading.Lock()
         self.bridge = CvBridge()
         self.max_history_points = 120  # limit trail length
+        self.pending_sheep_goal = None  # store goal XY until map_converter available
 
         # Camera specs (Zenmuse H20)
         self.focal_length = 4.5  # mm
@@ -256,12 +372,23 @@ class MapVisualiser(Node):
         # Subscribe to drone GPS and sheep paths
         self.create_subscription(NavSatFix, "/drone/gps", self.gps_cb, 10)
         self.create_subscription(Path, "/sheep_paths", self.sheep_paths_cb, 10)
+        self.create_subscription(Path, "/sheep/poses_sim", self.sheep_sim_cb, 10)
         self.create_subscription(Path, "/sheep_clusters", self.sheep_clusters_cb, 10)
+        self.create_subscription(PoseStamped, "/dog/command", self.dog_command_cb, 10)
+        self.create_subscription(PoseStamped, "/sheep/goal", self.sheep_goal_cb, 10)
         self.create_subscription(Image, "/sheep_detections", self.video_cb, 10)
         self.create_subscription(Vector3Stamped, "/drone/gimbal", self.gimbal_cb, 10)
         self.create_subscription(
             Vector3Stamped, "/drone/attitude", self.attitude_cb, 10
         )
+
+        # Publisher for field boundary
+        boundary_qos = QoSProfile(
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+        self.boundary_pub = self.create_publisher(Path, "/field/gps_fence/path", boundary_qos)
 
         # Setup Flask and SocketIO
         import os
@@ -294,6 +421,27 @@ class MapVisualiser(Node):
         def handle_connect():
             self.get_logger().info("Web client connected")
             self._send_update()
+
+        @self.socketio.on("field_boundary")
+        def handle_boundary(coords):
+            self.get_logger().info(f"Received field boundary with {len(coords)} points")
+            # Publish boundary to ROS topic
+            self._publish_boundary(coords)
+            # Initialize MapConverter so we can convert local XY (meters) to GPS
+            try:
+                self.map_converter = MapConverter(coords)
+                self.get_logger().info("MapConverter initialized from web-drawn field boundary")
+            except Exception as e:
+                self.get_logger().warn(f"Failed to initialize MapConverter from boundary: {e}")
+
+        @self.socketio.on("clear_boundary")
+        def handle_clear_boundary():
+            self.get_logger().info("Clearing field boundary")
+            # Publish empty boundary
+            self._publish_boundary([])
+            # Clear MapConverter so conversions stop
+            self.map_converter = None
+            self.get_logger().info("MapConverter cleared")
 
         # Start Flask in background thread
         self.flask_thread = threading.Thread(

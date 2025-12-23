@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Auto Shepherd - Live Map</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
         * {
@@ -166,17 +168,17 @@
         }
         
         .cluster-item {
-            background: #f3e5f5;
+            background: #e8f7f3;
             padding: 10px;
             margin-bottom: 8px;
-            border-left: 4px solid #9b59b6;
+            border-left: 4px solid #16a085;
             border-radius: 4px;
             font-size: 12px;
         }
         
         .cluster-item .id {
             font-weight: bold;
-            color: #8e44ad;
+            color: #16a085;
             margin-bottom: 5px;
         }
         
@@ -216,9 +218,24 @@
             border: 2px solid #d68910;
         }
 
-        .legend-marker.cluster {
+        .legend-marker.sheep-sim {
             background: #9b59b6;
             border: 2px solid #8e44ad;
+        }
+
+        .legend-marker.dog {
+            background: #ffff00;
+            border: 2px solid #cccc00;
+        }
+
+        .legend-marker.goal {
+            background: #27ae60;
+            border: 2px solid #229954;
+        }
+
+        .legend-marker.cluster {
+            background: #1abc9c;
+            border: 2px solid #16a085;
         }
         
         .map-controls {
@@ -303,9 +320,19 @@
             </div>
 
             <div class="map-controls">
+                <div class="map-controls-title">📐 Field Boundary</div>
+                <button class="map-button" onclick="startDrawing()">Draw Field Boundary</button>
+                <button class="map-button" onclick="clearBoundary()">Clear Boundary</button>
+            </div>
+
+            <div class="map-controls">
                 <div class="map-controls-title">👁️ Overlays</div>
                 <label class="toggle-row"><input type="checkbox" id="toggleTrails" checked onchange="toggleTrails()"> Sheep trails</label>
+                <label class="toggle-row"><input type="checkbox" id="toggleSimSheep" checked onchange="toggleSimSheep()"> Simulated sheep</label>
+                <label class="toggle-row"><input type="checkbox" id="toggleDogPath" checked onchange="toggleDogPath()"> Dog/herding path</label>
                 <label class="toggle-row"><input type="checkbox" id="toggleClusters" checked onchange="toggleClusters()"> Sheep clusters</label>
+                <label class="toggle-row"><input type="checkbox" id="toggleBoundary" checked onchange="toggleBoundary()"> Field boundary</label>
+                <label class="toggle-row"><input type="checkbox" id="toggleGoal" checked onchange="toggleGoal()"> Herding goal</label>
                 <label class="toggle-row"><input type="checkbox" id="toggleFov" checked onchange="toggleFov()"> Camera FOV</label>
                 <label class="toggle-row"><input type="checkbox" id="toggleVideoOverlay" checked onchange="toggleVideoOverlay()"> Video overlay</label>
                 <label class="toggle-row"><input type="checkbox" id="toggleVideoPanel" checked onchange="toggleVideoPanel()"> Video panel</label>
@@ -317,9 +344,23 @@
                     <p style="color: #999; text-align: center; padding: 20px 0;">Waiting for detections...</p>
                 </div>
             </div>
+
+            <div class="section">
+                <div class="section-title">� Simulated Sheep (<span id="sheepSimCount">0</span>)</div>
+                <div class="sheep-list" id="sheepSimList">
+                    <p style="color: #999; text-align: center; padding: 20px 0;">No simulated sheep...</p>
+                </div>
+            </div>
             
             <div class="section">
-                <div class="section-title">🟣 Sheep Clusters (<span id="clusterCount">0</span>)</div>
+                <div class="section-title">🚶 Dog Path (<span id="dogPathCount">0</span>)</div>
+                <div class="sheep-list" id="dogPathList">
+                    <p style="color: #999; text-align: center; padding: 20px 0;">No dog path data...</p>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">🟢 Sheep Clusters (<span id="clusterCount">0</span>)</div>
                 <div class="sheep-list" id="clusterList">
                     <p style="color: #999; text-align: center; padding: 20px 0;">No clusters detected...</p>
                 </div>
@@ -335,6 +376,18 @@
                     <span>Detected Sheep</span>
                 </div>
                 <div class="legend-item">
+                    <div class="legend-marker sheep-sim"></div>
+                    <span>Simulated Sheep</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-marker dog"></div>
+                    <span>Dog/Herding Path</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-marker goal"></div>
+                    <span>Herding Goal</span>
+                </div>
+                <div class="legend-item">
                     <div class="legend-marker cluster"></div>
                     <span>Sheep Clusters</span>
                 </div>
@@ -343,8 +396,17 @@
     </div>
     
     <script>
+        // Declare variables first
+        let drawnBoundary = null;
+        let drawControl = null;
+        let drawnItems = null;
+        
         // Initialize map
         const map = L.map('map').setView([53.26674766901415, -0.5290177288000211], 16);
+        
+        // Initialize drawn items layer after map
+        drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
         
         // Define tile layers
         const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -368,7 +430,7 @@
             })
         ]);
         
-        // Add default layer (satellite)
+        // Add default layer (satellite) to map
         let currentLayer = satelliteLayer;
         currentLayer.addTo(map);
         
@@ -396,6 +458,10 @@
         // Markers
         let droneMarker = null;
         let sheepMarkers = {};
+        let sheepSimMarkers = {};
+        let dogMarker = null;
+        let dogTrailPolyline = null;
+        let goalMarker = null;
         let clusterMarkers = {};
         let cameraFovPolygon = null;
         let videoOverlayCanvas = null;
@@ -403,8 +469,12 @@
         let showTrails = true;
         let showClusters = true;
         let showFov = true;
+        let showBoundary = true;
+        let showGoal = true;
         let showVideoOverlay = true;
         let showVideoPanel = true;
+        let showSimSheep = true;
+        let showDogPath = true;
         let centerOnDrone = true;
         let lastData = null;
         
@@ -544,6 +614,156 @@
                     '<p style="color: #999; text-align: center; padding: 20px 0;">No clusters detected</p>';
             }
 
+            // Update simulated sheep list in sidebar
+            if (data.sheep_sim && data.sheep_sim.length > 0) {
+                document.getElementById('sheepSimCount').textContent = data.sheep_sim.length;
+                const sheepSimListHtml = data.sheep_sim
+                    .map(sheep => {
+                        return `
+                            <div class="sheep-item">
+                                <div class="id">Sim ${sheep.id}</div>
+                                <p><span class="label">Lat:</span> ${sheep.latitude.toFixed(6)}</p>
+                                <p><span class="label">Lon:</span> ${sheep.longitude.toFixed(6)}</p>
+                            </div>
+                        `;
+                    })
+                    .join('');
+                
+                document.getElementById('sheepSimList').innerHTML = sheepSimListHtml;
+            } else {
+                document.getElementById('sheepSimCount').textContent = '0';
+                document.getElementById('sheepSimList').innerHTML = 
+                    '<p style="color: #999; text-align: center; padding: 20px 0;">No simulated sheep</p>';
+            }
+
+            // Update simulated sheep markers on map
+            if (showSimSheep && data.sheep_sim && data.sheep_sim.length > 0) {
+                const sheepSimIds = new Set();
+                for (const sheep of data.sheep_sim) {
+                    sheepSimIds.add(sheep.id);
+                    const lat = sheep.latitude;
+                    const lon = sheep.longitude;
+
+                    if (!sheepSimMarkers[sheep.id]) {
+                        sheepSimMarkers[sheep.id] = L.circleMarker([lat, lon], {
+                            radius: 8,
+                            fillColor: '#9b59b6',
+                            color: '#8e44ad',
+                            weight: 2,
+                            opacity: 1,
+                            fillOpacity: 0.8
+                        }).addTo(map).bindPopup(`<b>Sim Sheep ${sheep.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
+                    } else {
+                        sheepSimMarkers[sheep.id].setLatLng([lat, lon]);
+                        sheepSimMarkers[sheep.id].setPopupContent(`<b>Sim Sheep ${sheep.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
+                    }
+                }
+
+                // Remove old markers
+                for (const id in sheepSimMarkers) {
+                    if (!sheepSimIds.has(id)) {
+                        map.removeLayer(sheepSimMarkers[id]);
+                        delete sheepSimMarkers[id];
+                    }
+                }
+            } else if (!showSimSheep) {
+                // Remove all simulated sheep markers
+                for (const id in sheepSimMarkers) {
+                    map.removeLayer(sheepSimMarkers[id]);
+                    delete sheepSimMarkers[id];
+                }
+            }
+
+            // Update dog/herding position and trail
+            if (showDogPath && data.dog_position && data.dog_trail) {
+                // Update dog position marker
+                const dogLat = data.dog_position.latitude;
+                const dogLon = data.dog_position.longitude;
+                
+                if (!dogMarker) {
+                    dogMarker = L.circleMarker([dogLat, dogLon], {
+                        radius: 10,
+                        fillColor: '#ffff00',
+                        color: '#cccc00',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.9
+                    }).addTo(map).bindPopup(`<b>Dog/Herding</b><br>Lat: ${dogLat.toFixed(6)}<br>Lon: ${dogLon.toFixed(6)}`);
+                    dogMarker.bringToFront();
+                } else {
+                    dogMarker.setLatLng([dogLat, dogLon]);
+                    dogMarker.setPopupContent(`<b>Dog/Herding</b><br>Lat: ${dogLat.toFixed(6)}<br>Lon: ${dogLon.toFixed(6)}`);
+                    dogMarker.bringToFront();
+                }
+                
+                // Update dog trail polyline
+                if (data.dog_trail.length > 1) {
+                    if (!dogTrailPolyline) {
+                        dogTrailPolyline = L.polyline(data.dog_trail, {
+                            color: '#ffff00',
+                            weight: 2,
+                            opacity: 0.7,
+                            dashArray: '5, 5'
+                        }).addTo(map);
+                    } else {
+                        dogTrailPolyline.setLatLngs(data.dog_trail);
+                    }
+                }
+                
+                // Update dog path count
+                document.getElementById('dogPathCount').textContent = data.dog_trail.length;
+                const dogPathInfo = data.dog_trail.length > 0 ? 
+                    `<div class="sheep-item"><div class="id">Path Points: ${data.dog_trail.length}</div><p>Current: (${dogLat.toFixed(4)}, ${dogLon.toFixed(4)})</p></div>` :
+                    '<p style="color: #999; text-align: center; padding: 20px 0;">No dog path data...</p>';
+                document.getElementById('dogPathList').innerHTML = dogPathInfo;
+            } else if (!showDogPath) {
+                // Remove dog markers and trail
+                if (dogMarker) {
+                    map.removeLayer(dogMarker);
+                    dogMarker = null;
+                }
+                if (dogTrailPolyline) {
+                    map.removeLayer(dogTrailPolyline);
+                    dogTrailPolyline = null;
+                }
+                document.getElementById('dogPathCount').textContent = '0';
+                document.getElementById('dogPathList').innerHTML = '<p style="color: #999; text-align: center; padding: 20px 0;">Dog path hidden</p>';
+            }
+            
+            // Update goal marker
+            if (showGoal) {
+                if (data.sheep_goal) {
+                    const goalLat = data.sheep_goal.latitude;
+                    const goalLon = data.sheep_goal.longitude;
+
+                    if (!goalMarker) {
+                        goalMarker = L.circleMarker([goalLat, goalLon], {
+                            radius: 12,
+                            fillColor: '#27ae60',
+                            color: '#229954',
+                            weight: 3,
+                            opacity: 1,
+                            fillOpacity: 0.8
+                        }).addTo(map).bindPopup(`<b>Herding Goal</b><br>Lat: ${goalLat.toFixed(6)}<br>Lon: ${goalLon.toFixed(6)}`);
+                        goalMarker.bringToFront();
+                    } else {
+                        goalMarker.setLatLng([goalLat, goalLon]);
+                        goalMarker.setPopupContent(`<b>Herding Goal</b><br>Lat: ${goalLat.toFixed(6)}<br>Lon: ${goalLon.toFixed(6)}`);
+                        goalMarker.bringToFront();
+                    }
+                } else if (goalMarker) {
+                    // Remove goal marker if no goal data
+                    map.removeLayer(goalMarker);
+                    goalMarker = null;
+                }
+            } else {
+                // If goal is toggled off, ensure it's removed from map
+                if (goalMarker) {
+                    map.removeLayer(goalMarker);
+                    goalMarker = null;
+                }
+            }
+
             // Update sheep clusters
             if (showClusters) {
                 const clusters = data.sheep_clusters || [];
@@ -558,8 +778,8 @@
                     if (!clusterMarkers[cluster.id]) {
                         clusterMarkers[cluster.id] = L.circleMarker([lat, lon], {
                             radius: radius,
-                            fillColor: '#9b59b6',
-                            color: '#8e44ad',
+                            fillColor: '#1abc9c',
+                            color: '#16a085',
                             weight: 2,
                             opacity: 1,
                             fillOpacity: 0.6
@@ -584,6 +804,21 @@
                     map.removeLayer(clusterMarkers[id]);
                     delete clusterMarkers[id];
                 }
+            }
+            
+            // Update dog/herding position and trail
+            // Note: dog_position comes as XY meters, need to add reference point conversion
+            // For now, we'll skip rendering if coordinates are in meters
+            // You can add MapConverter logic later to convert XY to lat/lon
+            if (data.dog_position && data.dog_position.x_meters !== undefined) {
+                // Skip rendering for now - needs coordinate conversion
+                // TODO: Implement XY to GPS conversion using field boundary reference point
+            }
+            
+            if (data.dog_trail && data.dog_trail.length > 1) {
+                // Also needs coordinate conversion from XY to lat/lon
+                // For now, skip rendering
+                // TODO: Implement trail rendering after coordinate conversion
             }
             
             // Update sheep paths/trails
@@ -680,13 +915,58 @@
 
                     clusterMarkers[cluster.id] = L.circleMarker([lat, lon], {
                         radius: radius,
-                        fillColor: '#9b59b6',
-                        color: '#8e44ad',
+                        fillColor: '#1abc9c',
+                        color: '#16a085',
                         weight: 2,
                         opacity: 1,
                         fillOpacity: 0.6
                     }).addTo(map).bindPopup(`<b>Cluster ${cluster.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}<br>Size: ${size}`);
                     clusterMarkers[cluster.id].bringToFront();
+                }
+            }
+        }
+
+        function toggleBoundary() {
+            showBoundary = document.getElementById('toggleBoundary').checked;
+            if (!showBoundary) {
+                if (drawnBoundary) {
+                    drawnItems.removeLayer(drawnBoundary);
+                }
+            } else {
+                if (drawnBoundary) {
+                    drawnItems.addLayer(drawnBoundary);
+                }
+            }
+        }
+
+        function toggleGoal() {
+            showGoal = document.getElementById('toggleGoal').checked;
+            if (!showGoal) {
+                if (goalMarker) {
+                    map.removeLayer(goalMarker);
+                    goalMarker = null;
+                }
+            } else if (lastData && lastData.sheep_goal) {
+                // Recreate goal marker from last data
+                const goalLat = lastData.sheep_goal.latitude;
+                const goalLon = lastData.sheep_goal.longitude;
+                if (!goalMarker) {
+                    goalMarker = L.circleMarker([goalLat, goalLon], {
+                        radius: 12,
+                        fillColor: '#27ae60',
+                        color: '#229954',
+                        weight: 3,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    }).addTo(map).bindPopup(`<b>Herding Goal</b><br>Lat: ${goalLat.toFixed(6)}<br>Lon: ${goalLon.toFixed(6)}`).bindTooltip(`Herding Goal: ${goalLat.toFixed(6)}, ${goalLon.toFixed(6)}`, {direction: 'top', offset: [0, -10]});
+                    goalMarker.bringToFront();
+                } else {
+                    goalMarker.setLatLng([goalLat, goalLon]);
+                    goalMarker.setPopupContent(`<b>Herding Goal</b><br>Lat: ${goalLat.toFixed(6)}<br>Lon: ${goalLon.toFixed(6)}`);
+                    // Update tooltip text as well
+                    try { goalMarker.unbindTooltip(); } catch(e) {}
+                    goalMarker.bindTooltip(`Herding Goal: ${goalLat.toFixed(6)}, ${goalLon.toFixed(6)}`, {direction: 'top', offset: [0, -10]});
+                    goalMarker.bringToFront();
                 }
             }
         }
@@ -733,6 +1013,22 @@
             panel.style.display = showVideoPanel ? 'flex' : 'none';
         }
 
+        function toggleSimSheep() {
+            showSimSheep = document.getElementById('toggleSimSheep').checked;
+            // Trigger update
+            if (lastData) {
+                handleMapUpdate(lastData);
+            }
+        }
+
+        function toggleDogPath() {
+            showDogPath = document.getElementById('toggleDogPath').checked;
+            // Trigger update
+            if (lastData) {
+                handleMapUpdate(lastData);
+            }
+        }
+
         function toggleCenter() {
             centerOnDrone = document.getElementById('toggleCenter').checked;
             if (centerOnDrone && lastData && lastData.drone) {
@@ -741,6 +1037,71 @@
                 map.setView([lat, lon], map.getZoom());
             }
         }
+
+        // Initialize draw control BEFORE functions that use it
+        drawControl = new L.Control.Draw({
+            draw: {
+                polygon: {
+                    allowIntersection: false,
+                    shapeOptions: {
+                        color: '#ff7800',
+                        weight: 3
+                    }
+                },
+                polyline: false,
+                circle: false,
+                rectangle: false,
+                marker: false,
+                circlemarker: false
+            },
+            edit: {
+                featureGroup: drawnItems,
+                remove: false
+            }
+        });
+        map.addControl(drawControl);
+
+        function startDrawing() {
+            // Clear any existing boundary
+            if (drawnBoundary) {
+                drawnItems.removeLayer(drawnBoundary);
+                drawnBoundary = null;
+            }
+            
+            // Enable polygon drawing
+            new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
+        }
+
+        function clearBoundary() {
+            if (drawnBoundary) {
+                drawnItems.removeLayer(drawnBoundary);
+                drawnBoundary = null;
+                socket.emit('clear_boundary');
+            }
+        }
+
+        // Handle polygon creation
+        map.on(L.Draw.Event.CREATED, function(event) {
+            const layer = event.layer;
+            
+            // Remove old boundary if exists
+            if (drawnBoundary) {
+                drawnItems.removeLayer(drawnBoundary);
+            }
+            
+            // Add new boundary (respect visibility flag)
+            drawnBoundary = layer;
+            if (showBoundary) {
+                drawnItems.addLayer(layer);
+            }
+            
+            // Get coordinates as [lat, lon] pairs
+            const coords = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
+            
+            // Send to backend
+            socket.emit('field_boundary', coords);
+            console.log('Field boundary drawn with', coords.length, 'points');
+        });
         
         // Custom canvas overlay for video
         L.CanvasOverlay = L.Layer.extend({
