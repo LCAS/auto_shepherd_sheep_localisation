@@ -110,6 +110,51 @@
         .section {
             margin-bottom: 20px;
         }
+
+        .collapsible-section {
+            border: 1px solid #e5e5e5;
+            border-radius: 6px;
+            background: #fff;
+            overflow: hidden;
+        }
+
+        .section-toggle {
+            width: 100%;
+            border: none;
+            background: #f8f9fa;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            cursor: pointer;
+        }
+
+        .section-toggle:hover {
+            background: #eef1f4;
+        }
+
+        .section-toggle .section-title {
+            margin: 0;
+            padding: 0;
+            border: none;
+            font-size: 14px;
+            text-align: left;
+        }
+
+        .section-arrow {
+            font-size: 12px;
+            color: #67727e;
+            margin-left: 10px;
+            flex-shrink: 0;
+        }
+
+        .section-content {
+            padding: 12px;
+        }
+
+        .collapsible-section.collapsed .section-content {
+            display: none;
+        }
         
         .section-title {
             font-weight: bold;
@@ -240,9 +285,9 @@
         
         .map-controls {
             background: white;
-            padding: 10px;
+            padding: 0;
             border-radius: 4px;
-            margin-bottom: 20px;
+            margin-bottom: 0;
         }
         
         .map-controls-title {
@@ -302,67 +347,113 @@
                 <div class="status disconnected" id="status">Connecting...</div>
             </div>
             
-            <div class="section">
-                <div class="section-title">🚁 Drone Position</div>
-                <div class="drone-info" id="droneInfo">
-                    <p><span class="label">Lat:</span> <span class="value">--</span></p>
-                    <p><span class="label">Lon:</span> <span class="value">--</span></p>
-                    <p><span class="label">Alt:</span> <span class="value">--</span></p>
+            <div class="section collapsible-section" id="sectionDrone">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">🚁 Drone Position</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="drone-info" id="droneInfo">
+                        <p><span class="label">Lat:</span> <span class="value">--</span></p>
+                        <p><span class="label">Lon:</span> <span class="value">--</span></p>
+                        <p><span class="label">Alt:</span> <span class="value">--</span></p>
+                    </div>
                 </div>
             </div>
             
-            <div class="map-controls">
-                <div class="map-controls-title">🗺️ Map View</div>
-                <button class="map-button" onclick="switchMapLayer('street')">Street Map</button>
-                <button class="map-button active" onclick="switchMapLayer('satellite')">Satellite</button>
-                <button class="map-button" onclick="switchMapLayer('hybrid')">Hybrid</button>
-                <label class="toggle-row"><input type="checkbox" id="toggleCenter" checked onchange="toggleCenter()"> Auto-center on drone</label>
-            </div>
-
-            <div class="map-controls">
-                <div class="map-controls-title">📐 Field Boundary</div>
-                <button class="map-button" onclick="startDrawing()">Draw Field Boundary</button>
-                <button class="map-button" onclick="clearBoundary()">Clear Boundary</button>
-            </div>
-
-            <div class="map-controls">
-                <div class="map-controls-title">👁️ Overlays</div>
-                <label class="toggle-row"><input type="checkbox" id="toggleTrails" checked onchange="toggleTrails()"> Sheep trails</label>
-                <label class="toggle-row"><input type="checkbox" id="toggleSimSheep" checked onchange="toggleSimSheep()"> Simulated sheep</label>
-                <label class="toggle-row"><input type="checkbox" id="toggleDogPath" checked onchange="toggleDogPath()"> Dog/herding path</label>
-                <label class="toggle-row"><input type="checkbox" id="toggleClusters" checked onchange="toggleClusters()"> Sheep clusters</label>
-                <label class="toggle-row"><input type="checkbox" id="toggleBoundary" checked onchange="toggleBoundary()"> Field boundary</label>
-                <label class="toggle-row"><input type="checkbox" id="toggleGoal" checked onchange="toggleGoal()"> Herding goal</label>
-                <label class="toggle-row"><input type="checkbox" id="toggleFov" checked onchange="toggleFov()"> Camera FOV</label>
-                <label class="toggle-row"><input type="checkbox" id="toggleVideoOverlay" checked onchange="toggleVideoOverlay()"> Video overlay</label>
-                <label class="toggle-row"><input type="checkbox" id="toggleVideoPanel" checked onchange="toggleVideoPanel()"> Video panel</label>
-            </div>
-            
-            <div class="section">
-                <div class="section-title">🐑 Detected Sheep (<span id="sheepCount">0</span>)</div>
-                <div class="sheep-list" id="sheepList">
-                    <p style="color: #999; text-align: center; padding: 20px 0;">Waiting for detections...</p>
+            <div class="section collapsible-section" id="sectionMapView">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">🗺️ Map View</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="map-controls">
+                        <button class="map-button" onclick="switchMapLayer('street')">Street Map</button>
+                        <button class="map-button active" onclick="switchMapLayer('satellite')">Satellite</button>
+                        <button class="map-button" onclick="switchMapLayer('hybrid')">Hybrid</button>
+                        <label class="toggle-row"><input type="checkbox" id="toggleCenter" checked onchange="toggleCenter()"> Auto-center on drone</label>
+                    </div>
                 </div>
             </div>
 
-            <div class="section">
-                <div class="section-title">� Simulated Sheep (<span id="sheepSimCount">0</span>)</div>
-                <div class="sheep-list" id="sheepSimList">
-                    <p style="color: #999; text-align: center; padding: 20px 0;">No simulated sheep...</p>
+            <div class="section collapsible-section" id="sectionFieldBoundary">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">📐 Field Boundary</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="map-controls">
+                        <button class="map-button" onclick="startDrawing()">Draw Field Boundary</button>
+                        <button class="map-button" onclick="clearBoundary()">Clear Boundary</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section collapsible-section" id="sectionOverlays">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">👁️ Overlays</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="map-controls">
+                        <label class="toggle-row"><input type="checkbox" id="toggleTrails" checked onchange="toggleTrails()"> Sheep trails</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleSimSheep" checked onchange="toggleSimSheep()"> Simulated sheep</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleDogPath" checked onchange="toggleDogPath()"> Dog/herding path</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleClusters" checked onchange="toggleClusters()"> Sheep clusters</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleBoundary" checked onchange="toggleBoundary()"> Field boundary</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleGoal" checked onchange="toggleGoal()"> Herding goal</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleFov" checked onchange="toggleFov()"> Camera FOV</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleVideoOverlay" checked onchange="toggleVideoOverlay()"> Video overlay</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleVideoPanel" checked onchange="toggleVideoPanel()"> Video panel</label>
+                    </div>
                 </div>
             </div>
             
-            <div class="section">
-                <div class="section-title">🚶 Dog Path (<span id="dogPathCount">0</span>)</div>
-                <div class="sheep-list" id="dogPathList">
-                    <p style="color: #999; text-align: center; padding: 20px 0;">No dog path data...</p>
+            <div class="section collapsible-section" id="sectionDetectedSheep">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">🐑 Detected Sheep (<span id="sheepCount">0</span>)</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="sheep-list" id="sheepList">
+                        <p style="color: #999; text-align: center; padding: 20px 0;">Waiting for detections...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section collapsible-section" id="sectionSimulatedSheep">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">🐏 Simulated Sheep (<span id="sheepSimCount">0</span>)</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="sheep-list" id="sheepSimList">
+                        <p style="color: #999; text-align: center; padding: 20px 0;">No simulated sheep...</p>
+                    </div>
                 </div>
             </div>
             
-            <div class="section">
-                <div class="section-title">🟢 Sheep Clusters (<span id="clusterCount">0</span>)</div>
-                <div class="sheep-list" id="clusterList">
-                    <p style="color: #999; text-align: center; padding: 20px 0;">No clusters detected...</p>
+            <div class="section collapsible-section" id="sectionDogPath">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">🚶 Dog Path (<span id="dogPathCount">0</span>)</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="sheep-list" id="dogPathList">
+                        <p style="color: #999; text-align: center; padding: 20px 0;">No dog path data...</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section collapsible-section" id="sectionClusters">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">🟢 Sheep Clusters (<span id="clusterCount">0</span>)</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="sheep-list" id="clusterList">
+                        <p style="color: #999; text-align: center; padding: 20px 0;">No clusters detected...</p>
+                    </div>
                 </div>
             </div>
             
@@ -876,6 +967,17 @@
                 videoOverlayCanvas = null;
             }
         });
+
+        function toggleSection(button) {
+            const section = button.closest('.collapsible-section');
+            if (!section) return;
+
+            section.classList.toggle('collapsed');
+            const arrow = button.querySelector('.section-arrow');
+            if (arrow) {
+                arrow.textContent = section.classList.contains('collapsed') ? '▶' : '▼';
+            }
+        }
 
         function toggleTrails() {
             showTrails = document.getElementById('toggleTrails').checked;
