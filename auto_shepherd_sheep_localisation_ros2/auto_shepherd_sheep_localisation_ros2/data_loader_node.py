@@ -2,7 +2,7 @@
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Empty, Float32, String
 from sensor_msgs.msg import NavSatFix, Image
 from geometry_msgs.msg import Vector3Stamped, QuaternionStamped
 from cv_bridge import CvBridge
@@ -10,6 +10,7 @@ import cv2
 import re
 import time
 import json
+import threading
 from pathlib import Path
 
 
@@ -37,14 +38,28 @@ class DroneDataPublisher(Node):
         self.gimbal_pub = self.create_publisher(Vector3Stamped, f"{topic}/gimbal", 10)
         self.camera_pub = self.create_publisher(String, f"{topic}/camera", 10)
         self.image_pub = self.create_publisher(Image, f"{topic}/image", 10)
+        self.replay_reset_pub = self.create_publisher(Empty, "/drone/replay_reset", 10)
+        self.replay_status_pub = self.create_publisher(String, "/drone/replay_status", 10)
         self.relative_altitude_pub = self.create_publisher(
             Float32, f"{topic}/relative_altitude", 10
         )
         self.absolute_altitude_pub = self.create_publisher(
             Float32, f"{topic}/absolute_altitude", 10
         )
+        self.replay_selection_sub = self.create_subscription(
+            String, "/drone/select_replay", self.replay_selection_cb, 10
+        )
+        self.replay_command_sub = self.create_subscription(
+            String, "/drone/replay_command", self.replay_command_cb, 10
+        )
 
         self.bridge = CvBridge()
+        self._replay_lock = threading.Lock()
+        self._requested_replay = None
+        self._stop_playback = threading.Event()
+        self._wake_playback = threading.Event()
+        self._pause_playback = threading.Event()
+        self._last_replay_status = None
 
         # Get file paths
         video_path = self.get_parameter("video_path").value
@@ -57,11 +72,11 @@ class DroneDataPublisher(Node):
         self.get_logger().info(f"Video: {video_path}")
         self.get_logger().info(f"SRT: {srt_path}")
 
-        # Parse SRT and start streaming
-        self.srt_data = self.parse_srt_file(srt_path)
-        self.get_logger().info(f"Parsed {len(self.srt_data)} frames from SRT")
-
-        self.stream_data(video_path)
+        self._requested_replay = (str(video_path), str(srt_path))
+        self.playback_thread = threading.Thread(
+            target=self._playback_loop, name="replay-playback", daemon=True
+        )
+        self.playback_thread.start()
 
     def find_sample_files(self):
         """Search for sample video and SRT files"""
@@ -85,6 +100,119 @@ class DroneDataPublisher(Node):
                     return video, srt
 
         raise FileNotFoundError("Could not find sample video files")
+
+    def replay_selection_cb(self, msg):
+        """Switch playback to a dashboard-selected MP4/SRT pair."""
+        try:
+            selection = json.loads(msg.data)
+            video_path = Path(str(selection["video_path"])).resolve()
+            srt_path = Path(str(selection["srt_path"])).resolve()
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            self.get_logger().warning(f"Ignoring invalid replay selection: {exc}")
+            return
+
+        if video_path.suffix.lower() != ".mp4" or srt_path.suffix.lower() != ".srt":
+            self.get_logger().warning("Ignoring replay selection with non-MP4/SRT files")
+            return
+        if not video_path.is_file() or not srt_path.is_file():
+            self.get_logger().warning(
+                f"Ignoring replay selection because files are unavailable: {video_path}, {srt_path}"
+            )
+            return
+
+        with self._replay_lock:
+            self._requested_replay = (str(video_path), str(srt_path))
+        self._stop_playback.set()
+        self._wake_playback.set()
+        self.get_logger().info(f"Replay selection received: {video_path.name}")
+
+    def replay_command_cb(self, msg):
+        """Handle play, pause, and reset commands from the dashboard."""
+        try:
+            command = str(json.loads(msg.data).get("command", "")).lower()
+        except (ValueError, TypeError, AttributeError):
+            command = str(msg.data).lower().strip()
+
+        if command == "pause":
+            self._pause_playback.set()
+            self._publish_current_replay_state("paused")
+        elif command == "play":
+            self._pause_playback.clear()
+            self._wake_playback.set()
+            self._publish_current_replay_state("playing")
+        elif command == "reset":
+            self._pause_playback.clear()
+            self._stop_playback.set()
+            self._wake_playback.set()
+            self.get_logger().info("Replay reset requested: restarting current video and tracker state")
+        else:
+            self.get_logger().warning(f"Ignoring unknown replay command: {command}")
+
+    def _playback_loop(self):
+        """Run replay in a worker so ROS callbacks can change the source."""
+        while rclpy.ok():
+            with self._replay_lock:
+                replay = self._requested_replay
+            if replay is None:
+                self._wake_playback.wait(timeout=1.0)
+                self._wake_playback.clear()
+                continue
+
+            video_path, srt_path = replay
+            self._stop_playback.clear()
+            self._wake_playback.clear()
+            self._pause_playback.clear()
+            try:
+                self.srt_data = self.parse_srt_file(srt_path)
+                self.get_logger().info(
+                    f"Selected replay: {video_path} ({len(self.srt_data)} SRT frames)"
+                )
+                self.replay_reset_pub.publish(Empty())
+                self.stream_data(video_path)
+            except Exception as exc:
+                self.get_logger().error(f"Replay failed: {exc}")
+                self._wake_playback.wait(timeout=1.0)
+                self._wake_playback.clear()
+
+            if not self._stop_playback.is_set() and not self.loop_video:
+                break
+
+    def stop_playback(self):
+        """Stop the worker cleanly during ROS shutdown."""
+        self._stop_playback.set()
+        self._wake_playback.set()
+        if getattr(self, "playback_thread", None) is not None:
+            self.playback_thread.join(timeout=2.0)
+
+    def publish_replay_status(self, video_path, current_time_s, duration_s, playing=True):
+        """Publish timing metadata for the dashboard replay timeline."""
+        status = {
+            "video_name": Path(video_path).name,
+            "start_time_s": 0.0,
+            "current_time_s": max(0.0, float(current_time_s)),
+            "end_time_s": max(0.0, float(duration_s)),
+            "duration_s": max(0.0, float(duration_s)),
+            "playing": bool(playing),
+            "state": "playing" if playing else "ended",
+        }
+        with self._replay_lock:
+            self._last_replay_status = status
+        message = String()
+        message.data = json.dumps(status)
+        self.replay_status_pub.publish(message)
+
+    def _publish_current_replay_state(self, state):
+        """Publish a pause/play state without changing the current position."""
+        with self._replay_lock:
+            if self._last_replay_status is None:
+                return
+            status = dict(self._last_replay_status)
+            status["playing"] = state == "playing"
+            status["state"] = state
+            self._last_replay_status = status
+        message = String()
+        message.data = json.dumps(status)
+        self.replay_status_pub.publish(message)
 
     def parse_srt_file(self, srt_path):
         """Parse DJI SRT file and extract telemetry data"""
@@ -160,17 +288,34 @@ class DroneDataPublisher(Node):
 
         fps = cap.get(cv2.CAP_PROP_FPS)
         frame_duration = 1.0 / fps if fps > 0 else 1.0 / 30.0
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        srt_start = float(self.srt_data[0].get("time", 0.0)) if self.srt_data else 0.0
+        srt_end = float(self.srt_data[-1].get("time", srt_start)) if self.srt_data else srt_start
+        duration_s = max(0.0, srt_end - srt_start, frame_count * frame_duration)
 
         self.get_logger().info(f"Streaming at {fps:.2f} FPS")
+        self.publish_replay_status(video_path, 0.0, duration_s)
 
         frame_idx = 0
         start_time = time.time()
+        replay_generation = 0
 
-        while cap.isOpened() and rclpy.ok():
+        while cap.isOpened() and rclpy.ok() and not self._stop_playback.is_set():
+            while self._pause_playback.is_set() and not self._stop_playback.is_set() and rclpy.ok():
+                self._wake_playback.wait(timeout=0.25)
+                self._wake_playback.clear()
+            if self._stop_playback.is_set() or not rclpy.ok():
+                break
             ret, frame = cap.read()
             if not ret:
-                if self.loop_video:
+                if self.loop_video and not self._stop_playback.is_set():
                     # Loop: restart video and telemetry
+                    replay_generation += 1
+                    self.publish_replay_status(video_path, duration_s, duration_s, playing=False)
+                    self.replay_reset_pub.publish(Empty())
+                    self.get_logger().info(
+                        f"Replay loop {replay_generation}: published /drone/replay_reset"
+                    )
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     frame_idx = 0
                     start_time = time.time()
@@ -181,6 +326,10 @@ class DroneDataPublisher(Node):
             if frame_idx < len(self.srt_data):
                 telemetry = self.srt_data[frame_idx]
                 self.publish_telemetry(telemetry)
+                current_time_s = float(telemetry.get("time", srt_start)) - srt_start
+            else:
+                current_time_s = frame_idx * frame_duration
+            self.publish_replay_status(video_path, current_time_s, duration_s)
 
             # Publish image frame
             try:
@@ -195,7 +344,8 @@ class DroneDataPublisher(Node):
             expected_time = start_time + (frame_idx * frame_duration)
             sleep_time = expected_time - time.time()
             if sleep_time > 0:
-                time.sleep(sleep_time)
+                self._wake_playback.wait(timeout=sleep_time)
+                self._wake_playback.clear()
 
             frame_idx += 1
 
@@ -288,6 +438,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.stop_playback()
         node.destroy_node()
         rclpy.shutdown()
 

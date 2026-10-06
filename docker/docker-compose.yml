@@ -24,10 +24,14 @@ services:
       # enable mount for gui applications
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
 
+      # Persist Boids analysis history across container restarts
+      - ../data:/home/ros/data:rw
+
     environment:
       - BASE_WS=/home/ros/base_ws
       - DISPLAY=:0
       - QT_X11_NO_MITSHM=1
+      - SHEEP_RADAR_DB=/home/ros/data/boids.sqlite3
 
     ports:
       - "8080:8080"

@@ -60,3 +60,20 @@ Access the live map at `http://localhost:8080` to view:
 - Drone telemetry and sheep/cluster lists
 
 See [MAP_VISUALIZER_README.md](auto_shepherd_sheep_localisation_ros2/MAP_VISUALIZER_README.md) for detailed documentation.
+
+### Boids analysis launch
+
+The injected tmule configuration now starts the map visualiser, detector,
+sample replay, and the rolling Boids analysis node without RViz. From the
+Docker directory, enter the container with `docker compose run --rm
+auto_shepherd_sheep_localisation_ros2_humble bash`, then run:
+
+```bash
+cd /home/ros/base_ws/src/auto_shepherd_sheep_localisation_ros2/tmule
+tmule -c injected.tmule.yaml launch
+```
+
+Open `http://localhost:8080`. The dashboard reports warming-up/quality states,
+keeps bounded history, persists results in `data/boids.sqlite3`, and exposes
+`/boids/export.csv`. A detector-free synthetic route is available through
+`ros2 run auto_shepherd_sheep_localisation_ros2 boids_demo_node.py`.

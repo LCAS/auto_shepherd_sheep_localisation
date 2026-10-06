@@ -6,14 +6,19 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import NavSatFix, Image
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Vector3Stamped, PoseStamped
+from std_msgs.msg import String
+from std_msgs.msg import Empty
 from cv_bridge import CvBridge
 import cv2
 import math
+import json
 
 import threading
+from pathlib import Path as FilePath
 from flask import Flask, render_template, Response, send_from_directory
 from flask_socketio import SocketIO
 from auto_shepherd_sheep_localisation_ros2.utils.geo_converter import MapConverter
+from auto_shepherd_sheep_localisation_ros2.boids_storage import BoidsStorage
 
 
 class MapVisualiser(Node):
@@ -178,6 +183,58 @@ class MapVisualiser(Node):
         except Exception as e:
             self.get_logger().warn(f"Failed to convert video frame: {e}")
 
+    def replay_status_cb(self, msg: String):
+        """Bridge replay timing metadata to the dashboard."""
+        try:
+            status = json.loads(msg.data)
+            if not isinstance(status, dict):
+                raise ValueError("replay status is not an object")
+            with self.lock:
+                self.replay_status = status
+            self._send_update()
+        except Exception as exc:
+            self.get_logger().warn(f"Failed to consume replay status: {exc}")
+
+    def boids_analysis_cb(self, msg: String):
+        """Bridge versioned Boids results to Socket.IO and durable history."""
+        try:
+            result = json.loads(msg.data)
+            if not isinstance(result, dict) or result.get("schema_version") != 1:
+                raise ValueError("unsupported Boids result schema")
+            if self.boids_storage is not None:
+                self.boids_storage.save(result)
+            with self.lock:
+                self.boids_analysis = result
+                self.boids_history.append(result)
+                if len(self.boids_history) > self.max_boids_history:
+                    self.boids_history = self.boids_history[-self.max_boids_history :]
+            self._send_update()
+            self._send_boids_history()
+        except Exception as exc:
+            self.get_logger().warn(f"Failed to consume Boids analysis: {exc}")
+
+    def replay_reset_cb(self, _msg: Empty):
+        """Clear live trails/markers when replay starts a new source segment."""
+        with self.lock:
+            self.sheep_positions.clear()
+            self.sheep_history.clear()
+            self.sheep_clusters = []
+            self.boids_analysis = None
+            self.boids_history = []
+            self.replay_reset_serial += 1
+        self._send_update()
+        self._send_boids_history()
+
+    def _send_boids_history(self):
+        try:
+            with self.lock:
+                history = list(self.boids_history)
+                latest = self.boids_analysis
+            self.socketio.emit("boids_analysis_update", latest, to=None)
+            self.socketio.emit("boids_analysis_history", history, to=None)
+        except Exception as exc:
+            self.get_logger().warn(f"Failed to send Boids update: {exc}")
+
     def _generate_frames(self):
         """Generator for MJPEG video stream"""
         while True:
@@ -311,6 +368,9 @@ class MapVisualiser(Node):
                     "sheep_paths": self.sheep_history,
                     "dog_position": self.dog_position,
                     "dog_trail": self.dog_history,
+                    "boids_analysis": self.boids_analysis,
+                    "replay": self.replay_status,
+                    "replay_reset_serial": self.replay_reset_serial,
                 }
             self.socketio.emit("map_update", data, to=None)
         except Exception as e:
@@ -336,6 +396,33 @@ class MapVisualiser(Node):
         except Exception as e:
             self.get_logger().error(f"Failed to publish boundary: {e}")
 
+    def _discover_replays(self, package_dir):
+        """Return safe dashboard choices for MP4 files with matching SRT files."""
+        models_dir = FilePath(package_dir) / "detection_process" / "models"
+        roots = [models_dir / "videos", models_dir / "samples"]
+        choices = []
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for video_path in sorted(root.rglob("*")):
+                if not video_path.is_file() or video_path.suffix.lower() != ".mp4":
+                    continue
+                srt_candidates = [
+                    video_path.with_suffix(".srt"),
+                    video_path.with_suffix(".SRT"),
+                ]
+                srt_path = next((path for path in srt_candidates if path.is_file()), None)
+                if srt_path is None:
+                    continue
+                relative_video = video_path.relative_to(models_dir).as_posix()
+                choices.append({
+                    "id": relative_video,
+                    "label": relative_video,
+                    "video_path": str(video_path),
+                    "srt_path": str(srt_path),
+                })
+        return choices
+
     def __init__(self):
         super().__init__("map_visualiser")
 
@@ -354,6 +441,18 @@ class MapVisualiser(Node):
             []
         )  # [{'id': str, 'latitude': float, 'longitude': float, 'size': int}]
         self.latest_frame = None
+        self.replay_status = None
+        self.replay_reset_serial = 0
+        self.boids_analysis = None
+        self.max_boids_history = 240
+        try:
+            self.boids_storage = BoidsStorage()
+            self.boids_history = self.boids_storage.history(limit=self.max_boids_history)
+            self.boids_analysis = self.boids_history[-1] if self.boids_history else None
+        except Exception as exc:
+            self.get_logger().warn(f"Boids history storage unavailable: {exc}")
+            self.boids_storage = None
+            self.boids_history = []
         self.gimbal = None
         self.drone_attitude = None
         self.camera_fov_corners = []
@@ -377,6 +476,9 @@ class MapVisualiser(Node):
         self.create_subscription(PoseStamped, "/dog/command", self.dog_command_cb, 10)
         self.create_subscription(PoseStamped, "/sheep/goal", self.sheep_goal_cb, 10)
         self.create_subscription(Image, "/sheep_detections", self.video_cb, 10)
+        self.create_subscription(String, "/drone/replay_status", self.replay_status_cb, 10)
+        self.create_subscription(String, "/sheep/boids_analysis", self.boids_analysis_cb, 10)
+        self.create_subscription(Empty, "/drone/replay_reset", self.replay_reset_cb, 10)
         self.create_subscription(Vector3Stamped, "/drone/gimbal", self.gimbal_cb, 10)
         self.create_subscription(
             Vector3Stamped, "/drone/attitude", self.attitude_cb, 10
@@ -389,11 +491,17 @@ class MapVisualiser(Node):
             depth=1
         )
         self.boundary_pub = self.create_publisher(Path, "/field/gps_fence/path", boundary_qos)
+        self.replay_select_pub = self.create_publisher(String, "/drone/select_replay", 10)
+        self.replay_command_pub = self.create_publisher(String, "/drone/replay_command", 10)
 
         # Setup Flask and SocketIO
         import os
 
         pkg_dir = os.path.dirname(__file__)
+        self.replay_catalog = self._discover_replays(pkg_dir)
+        self.get_logger().info(
+            f"Discovered {len(self.replay_catalog)} replay(s) with matching MP4/SRT files"
+        )
         self.app = Flask(
             __name__,
             template_folder=os.path.join(pkg_dir, "web_templates"),
@@ -417,10 +525,45 @@ class MapVisualiser(Node):
                 mimetype="multipart/x-mixed-replace; boundary=frame",
             )
 
+        @self.app.route("/replays")
+        def replays():
+            # Do not expose filesystem paths to the browser.
+            self.replay_catalog = self._discover_replays(pkg_dir)
+            return {
+                "replays": [
+                    {"id": item["id"], "label": item["label"]}
+                    for item in self.replay_catalog
+                ]
+            }
+
+        @self.app.route("/boids/history")
+        def boids_history():
+            try:
+                values = self.boids_storage.history(limit=240) if self.boids_storage else list(self.boids_history)
+                return {"history": values}
+            except Exception as exc:
+                self.get_logger().warn(f"Boids history request failed: {exc}")
+                return {"history": [], "error": "history_unavailable"}, 503
+
+        @self.app.route("/boids/export.csv")
+        def boids_export():
+            try:
+                values = self.boids_storage.history(limit=2000) if self.boids_storage else list(self.boids_history)
+                from flask import Response as FlaskResponse
+                return FlaskResponse(
+                    self.boids_storage.export_csv(values) if self.boids_storage else "",
+                    mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=boids_analysis.csv"},
+                )
+            except Exception as exc:
+                self.get_logger().warn(f"Boids export failed: {exc}")
+                return {"error": "history_unavailable"}, 503
+
         @self.socketio.on("connect")
         def handle_connect():
             self.get_logger().info("Web client connected")
             self._send_update()
+            self._send_boids_history()
 
         @self.socketio.on("field_boundary")
         def handle_boundary(coords):
@@ -443,10 +586,46 @@ class MapVisualiser(Node):
             self.map_converter = None
             self.get_logger().info("MapConverter cleared")
 
+        @self.socketio.on("select_replay")
+        def handle_select_replay(selection):
+            """Send a validated dashboard replay choice to the data loader."""
+            self.replay_catalog = self._discover_replays(pkg_dir)
+            replay_id = str(selection.get("id", "")).strip() if isinstance(selection, dict) else ""
+            replay = next((item for item in self.replay_catalog if item["id"] == replay_id), None)
+            if replay is None:
+                return {"ok": False, "error": "Replay is unavailable or has no matching SRT file"}
+
+            message = String()
+            message.data = json.dumps({
+                "replay_id": replay["id"],
+                "video_path": replay["video_path"],
+                "srt_path": replay["srt_path"],
+            })
+            self.replay_select_pub.publish(message)
+            self.get_logger().info(f"Dashboard selected replay: {replay['label']}")
+            return {"ok": True, "label": replay["label"]}
+
+        @self.socketio.on("replay_control")
+        def handle_replay_control(command_payload):
+            """Forward dashboard play, pause, and reset commands to the loader."""
+            command = str(command_payload.get("command", "")).lower() if isinstance(command_payload, dict) else ""
+            if command not in {"play", "pause", "reset"}:
+                return {"ok": False, "error": "Unknown replay command"}
+            message = String()
+            message.data = json.dumps({"command": command})
+            self.replay_command_pub.publish(message)
+            self.get_logger().info(f"Dashboard replay command: {command}")
+            return {"ok": True, "command": command}
+
         # Start Flask in background thread
         self.flask_thread = threading.Thread(
             target=lambda: self.socketio.run(
-                self.app, host="0.0.0.0", port=8080, debug=True, use_reloader=False
+                self.app,
+                host="0.0.0.0",
+                port=8080,
+                debug=True,
+                use_reloader=False,
+                allow_unsafe_werkzeug=True,
             )
         )
         self.flask_thread.daemon = True
@@ -464,6 +643,8 @@ def main(args=None):
         # Allow graceful shutdown on Ctrl+C without printing a stack trace
         pass
     finally:
+        if getattr(node, "boids_storage", None) is not None:
+            node.boids_storage.close()
         node.destroy_node()
         rclpy.shutdown()
 

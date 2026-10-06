@@ -39,6 +39,21 @@ class SheepDetectROS:
         self.stream = stream
         self.tracker = tracker
 
+    def reset_tracker(self):
+        """Reset Ultralytics/ByteTrack state without reloading model weights."""
+        predictor = getattr(self.model, "predictor", None)
+        if predictor is None:
+            return
+        for tracker in getattr(predictor, "trackers", []) or []:
+            reset = getattr(tracker, "reset", None)
+            if callable(reset):
+                reset()
+        # Keep the tracker list itself: Ultralytics' callback expects the
+        # existing list to contain one tracker, while reset() clears its
+        # active tracks and ID counter.
+        if hasattr(predictor, "vid_path"):
+            predictor.vid_path = [None]
+
     def predict(self, frame, gps, attitude=None, gimbal=None, camera=None):
 
         # decode gps info

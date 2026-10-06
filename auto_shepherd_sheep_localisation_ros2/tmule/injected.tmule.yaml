@@ -31,8 +31,8 @@ windows:
 
   - name: outputs
     panes:
-      - rviz2
       - ros2 run auto_shepherd_sheep_localisation_ros2 map_visualiser_node.py
+      - ros2 run auto_shepherd_sheep_localisation_ros2 boids_analysis_node.py
 
   - name: system
     panes:

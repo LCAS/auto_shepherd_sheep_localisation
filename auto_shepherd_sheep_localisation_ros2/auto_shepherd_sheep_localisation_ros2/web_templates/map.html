@@ -4,11 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Auto Shepherd - Live Map</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐑</text></svg>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -30,11 +32,16 @@
             flex: 1;
             display: flex;
             flex-direction: column;
+            min-width: 0;
         }
         
         #map {
             flex: 1;
             background: #ddd;
+        }
+
+        #map.map-grayscale .leaflet-tile-pane {
+            filter: grayscale(1);
         }
         
         .video-panel {
@@ -42,15 +49,107 @@
             background: #000;
             border-top: 2px solid #333;
             display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            justify-content: stretch;
+            flex: 0 0 300px;
+        }
+
+        .main-content-resize-handle {
+            flex: 0 0 8px;
+            width: 100%;
+            cursor: row-resize;
+            background: #1f2937;
+            border-top: 1px solid #4b5563;
+            border-bottom: 1px solid #4b5563;
+            touch-action: none;
+        }
+
+        .main-content-resize-handle:hover,
+        body.video-resizing .main-content-resize-handle {
+            background: #60a5fa;
+        }
+
+        body.video-resizing {
+            cursor: row-resize;
+            user-select: none;
+        }
+
+        .video-stage {
+            position: relative;
+            display: flex;
             align-items: center;
             justify-content: center;
-            position: relative;
+            flex: 1 1 auto;
+            min-height: 0;
+            width: 100%;
+            overflow: hidden;
+            background: #000;
         }
         
-        .video-panel img {
+        .video-stage img {
             max-width: 100%;
             max-height: 100%;
             object-fit: contain;
+        }
+
+        .replay-timebar {
+            position: relative;
+            width: 100%;
+            flex: 0 0 auto;
+            padding: 7px 9px;
+            background: #111827;
+            color: #fff;
+            border-top: 1px solid #374151;
+            font-size: 11px;
+        }
+
+        .replay-timebar-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 5px;
+        }
+
+        .replay-controls { display: flex; gap: 5px; margin-top: 5px; }
+        .replay-control-button {
+            border: 1px solid #9ca3af;
+            border-radius: 3px;
+            background: #374151;
+            color: #fff;
+            padding: 3px 7px;
+            cursor: pointer;
+            font-size: 10px;
+        }
+        .replay-control-button:hover { background: #4b5563; }
+
+        .replay-video-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #e5e7eb;
+        }
+
+        .replay-time-labels {
+            display: flex;
+            justify-content: space-between;
+            color: #f9fafb;
+            font-family: monospace;
+            font-size: 10px;
+        }
+
+        .replay-progress-track {
+            height: 5px;
+            overflow: hidden;
+            background: #4b5563;
+            border-radius: 4px;
+        }
+
+        .replay-progress-fill {
+            width: 0%;
+            height: 100%;
+            background: #60a5fa;
+            transition: width 0.15s linear;
         }
         
         .video-label {
@@ -66,11 +165,99 @@
         }
         
         .sidebar {
-            width: 300px;
+            width: 380px;
+            min-width: 300px;
+            max-width: 48vw;
+            position: relative;
+            container-type: inline-size;
+            container-name: sidebar;
             background: white;
             padding: 20px;
             overflow-y: auto;
             box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+        }
+
+        .sidebar-resize-handle {
+            position: absolute;
+            z-index: 20;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 8px;
+            cursor: col-resize;
+            background: transparent;
+            touch-action: none;
+        }
+
+        .sidebar-resize-handle:hover,
+        body.sidebar-resizing .sidebar-resize-handle {
+            background: #bfdbfe;
+        }
+
+        body.sidebar-resizing {
+            cursor: col-resize;
+            user-select: none;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                height: auto;
+                min-height: 100vh;
+                flex-direction: column;
+            }
+
+            .main-content {
+                min-height: 70vh;
+            }
+
+            #map {
+                flex: 0 0 55vh;
+                min-height: 360px;
+            }
+
+            .video-panel {
+                flex-basis: 280px;
+                height: 280px;
+            }
+
+            .main-content-resize-handle {
+                display: none;
+            }
+
+            .sidebar {
+                width: 100%;
+                min-width: 0;
+                max-width: none;
+                overflow-y: visible;
+            }
+
+            .sidebar-resize-handle {
+                display: none;
+            }
+
+            .sidebar-cards > .section {
+                flex-basis: 100%;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .sidebar {
+                padding: 10px;
+            }
+
+            .video-panel {
+                flex-basis: 240px;
+                height: 240px;
+            }
+
+            .replay-timebar-header,
+            .replay-time-labels {
+                font-size: 10px;
+            }
+
+            .replay-controls {
+                flex-wrap: wrap;
+            }
         }
         
         .header {
@@ -109,6 +296,31 @@
         
         .section {
             margin-bottom: 20px;
+        }
+
+        .sidebar-cards {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .sidebar-cards > .section {
+            flex: 1 1 100%;
+            min-width: 0;
+            margin-bottom: 0;
+        }
+
+        @container sidebar (min-width: 520px) {
+            .sidebar-cards > .section {
+                flex: 0 0 calc(50% - 6px);
+            }
+        }
+
+        @media (max-width: 900px) {
+            .sidebar-cards > .section {
+                flex-basis: 100%;
+            }
         }
 
         .collapsible-section {
@@ -327,24 +539,110 @@
             font-size: 13px;
             color: #2c3e50;
         }
+
+        .boids-panel {
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 2px 0;
+            font-size: 12px;
+        }
+
+        .boids-disclaimer { color: #667085; line-height: 1.35; margin: 8px 0; }
+        .boids-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .boids-card { background: white; border: 1px solid #dbe5f5; border-radius: 5px; padding: 10px 5px; text-align: center; }
+        .boids-card .label { display: block; font-size: 11px; font-weight: 700; }
+        .boids-card .value { display: block; font-family: monospace; font-size: 22px; line-height: 1.15; font-weight: bold; margin-top: 6px; }
+        .boids-card.cohesion { border-top: 3px solid #2563eb; }
+        .boids-card.cohesion .label, .boids-card.cohesion .value { color: #2563eb; }
+        .boids-card.alignment { border-top: 3px solid #16a34a; }
+        .boids-card.alignment .label, .boids-card.alignment .value { color: #15803d; }
+        .boids-card.separation { border-top: 3px solid #dc2626; }
+        .boids-card.separation .label, .boids-card.separation .value { color: #dc2626; }
+        .boids-vector-legend { margin-top: 8px; padding: 7px 8px; background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; }
+        .boids-vector-legend-title { color: #475467; font-size: 10px; font-weight: 700; margin-bottom: 5px; }
+        .boids-vector-legend-items { display: flex; flex-wrap: wrap; gap: 5px 9px; }
+        .boids-vector-key { display: inline-flex; align-items: center; gap: 4px; color: #475467; font-size: 10px; }
+        .boids-vector-swatch { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+        .boids-vector-note { color: #667085; font-size: 10px; line-height: 1.35; margin-top: 5px; }
+        #boidsChart { width: 100%; height: 190px; margin-top: 12px; background: white; border: 1px solid #e5e7eb; border-radius: 4px; }
+        .boids-meta { color: #667085; margin-top: 7px; line-height: 1.4; }
+        .boids-status { display: flex; align-items: center; justify-content: center; min-height: 42px; padding: 10px 8px 12px; margin: 0 0 10px; text-align: center; font-weight: bold; color: #d97706; }
+        .boids-status.ok { color: #15803d; }
+        .boids-status.error { color: #b91c1c; }
+        .replay-select { width: 100%; padding: 7px; border: 1px solid #cbd5e1; border-radius: 4px; background: white; color: #2c3e50; font-size: 12px; }
+        .replay-picker { padding: 9px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
+        .replay-picker-label { display: block; color: #344054; font-size: 11px; font-weight: 700; margin-bottom: 5px; }
+        .replay-start-button { width: 100%; margin-top: 7px; padding: 8px; border: 1px solid #2563eb; border-radius: 4px; background: #2563eb; color: white; cursor: pointer; font-size: 12px; font-weight: 700; }
+        .replay-start-button:hover { background: #1d4ed8; }
+        .replay-start-button:disabled { background: #93c5fd; border-color: #93c5fd; cursor: wait; }
+        .replay-help { color: #667085; font-size: 10px; line-height: 1.35; margin-top: 6px; }
+        .replay-status { color: #d97706; font-size: 11px; margin-top: 6px; min-height: 14px; }
+        .sheep-boids-popup { margin-top: 6px; padding-top: 5px; border-top: 1px solid #e5e7eb; line-height: 1.45; }
+        .sheep-boids-popup .popup-title { font-weight: 700; color: #344054; }
+        .sheep-boids-popup .popup-cohesion { color: #2563eb; }
+        .sheep-boids-popup .popup-alignment { color: #15803d; }
+        .sheep-boids-popup .popup-separation { color: #dc2626; }
+        .sheep-boids-popup .popup-boundary { color: #9333ea; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="main-content">
             <div id="map"></div>
+            <div class="main-content-resize-handle" id="mainContentResizeHandle" title="Drag to resize map and video"></div>
             <div class="video-panel" id="videoPanel">
-                <div class="video-label">📹 Live Detection Feed</div>
-                <img src="/video_feed" alt="Live detection feed">
+                <div class="video-stage">
+                    <div class="video-label">📹 Live Detection Feed</div>
+                    <img src="/video_feed" alt="Live detection feed">
+                </div>
+                <div class="replay-timebar" id="replayTimebar">
+                    <div class="replay-timebar-header">
+                        <span class="replay-video-name" id="replayVideoName">Replay video</span>
+                        <span id="replayPlayingState">Waiting</span>
+                    </div>
+                    <div class="replay-controls">
+                        <button type="button" class="replay-control-button" id="replayPlayPause" onclick="toggleReplayPlayback()">Pause</button>
+                        <button type="button" class="replay-control-button" onclick="resetReplayTracking()">Reset tracking</button>
+                    </div>
+                    <div class="replay-progress-track">
+                        <div class="replay-progress-fill" id="replayProgressFill"></div>
+                    </div>
+                    <div class="replay-time-labels">
+                        <span id="replayStartTime">Start 00:00</span>
+                        <span id="replayCurrentTime">Current 00:00</span>
+                        <span id="replayEndTime">End 00:00</span>
+                    </div>
+                </div>
             </div>
         </div>
         
-        <div class="sidebar">
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-resize-handle" id="sidebarResizeHandle" title="Drag to resize sidebar"></div>
             <div class="header">
                 <img src="/static/logo.png" alt="Auto Shepherd - Sheep Radar 24" class="logo">
                 <!-- <h1>Auto Shepherd</h1> -->
                 <!-- <h1>Sheep Radar 24</h1> -->
                 <div class="status disconnected" id="status">Connecting...</div>
+            </div>
+
+            <div class="sidebar-cards">
+            <div class="section collapsible-section" id="sectionReplay">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">▶️ Replay video</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="replay-picker">
+                        <label class="replay-picker-label" for="replaySelect">Choose a recording</label>
+                        <select id="replaySelect" class="replay-select" onchange="selectReplay(this.value)">
+                            <option value="">Loading MP4/SRT pairs...</option>
+                        </select>
+                        <button type="button" class="replay-start-button" id="replayStartButton" onclick="startSelectedReplay()">▶ Start selected video</button>
+                    </div>
+                    <div id="replayStatus" class="replay-status"></div>
+                    <div class="replay-help">Only videos with a matching .srt telemetry file are listed. Choose a recording, then press Start selected video.</div>
+                </div>
             </div>
             
             <div class="section collapsible-section" id="sectionDrone">
@@ -371,7 +669,8 @@
                         <button class="map-button" onclick="switchMapLayer('street')">Street Map</button>
                         <button class="map-button active" onclick="switchMapLayer('satellite')">Satellite</button>
                         <button class="map-button" onclick="switchMapLayer('hybrid')">Hybrid</button>
-                        <label class="toggle-row"><input type="checkbox" id="toggleCenter" checked onchange="toggleCenter()"> Auto-center on drone</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleCenter" checked onchange="toggleCenter()"> Lock map to drone</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleMapGrayscale" onchange="toggleMapGrayscale()"> Grayscale map imagery</label>
                     </div>
                 </div>
             </div>
@@ -405,6 +704,42 @@
                         <label class="toggle-row"><input type="checkbox" id="toggleFov" checked onchange="toggleFov()"> Camera FOV</label>
                         <label class="toggle-row"><input type="checkbox" id="toggleVideoOverlay" checked onchange="toggleVideoOverlay()"> Video overlay</label>
                         <label class="toggle-row"><input type="checkbox" id="toggleVideoPanel" checked onchange="toggleVideoPanel()"> Video panel</label>
+                        <label class="toggle-row"><input type="checkbox" id="toggleBoidsVectors" onchange="toggleBoidsVectors()"> Boids vectors</label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section collapsible-section" id="sectionBoids">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">📈 Estimated flocking influences</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div class="boids-panel">
+                        <div id="boidsStatus" class="boids-status">Collecting movement data</div>
+                        <div class="boids-cards">
+                            <div class="boids-card cohesion"><span class="label">Cohesion</span><span class="value" id="boidsCohesion">--</span></div>
+                            <div class="boids-card alignment"><span class="label">Alignment</span><span class="value" id="boidsAlignment">--</span></div>
+                            <div class="boids-card separation"><span class="label">Separation</span><span class="value" id="boidsSeparation">--</span></div>
+                        </div>
+                        <div class="boids-vector-legend" aria-label="Boids vector colour legend">
+                            <div class="boids-vector-legend-title">Map arrow colours</div>
+                            <div class="boids-vector-legend-items">
+                                <span class="boids-vector-key"><span class="boids-vector-swatch" style="background:#2563eb"></span>Cohesion</span>
+                                <span class="boids-vector-key"><span class="boids-vector-swatch" style="background:#16a34a"></span>Alignment</span>
+                                <span class="boids-vector-key"><span class="boids-vector-swatch" style="background:#dc2626"></span>Separation</span>
+                                <span class="boids-vector-key"><span class="boids-vector-swatch" style="background:#9333ea"></span>Boundary</span>
+                            </div>
+                            <div class="boids-vector-note">When enabled, arrows are drawn for every currently visible detected sheep. Arrow length is display-scaled, not a calibrated force magnitude.</div>
+                        </div>
+                        <div id="boidsChart" aria-label="Boids coefficient history"></div>
+                        <div id="boidsMeta" class="boids-meta">No recent observations.</div>
+                        <div class="boids-disclaimer">These are fitted movement-model parameters, not validated health or welfare scores.</div>
+                        <details>
+                            <summary>Technical details</summary>
+                            <pre id="boidsTechnical" style="white-space: pre-wrap; font-size: 10px; margin-top: 6px;"></pre>
+                        </details>
+                        <a href="/boids/export.csv" style="display:block; margin-top:7px;">Download analysis CSV</a>
                     </div>
                 </div>
             </div>
@@ -455,6 +790,8 @@
                         <p style="color: #999; text-align: center; padding: 20px 0;">No clusters detected...</p>
                     </div>
                 </div>
+            </div>
+
             </div>
             
             <div class="legend">
@@ -568,6 +905,175 @@
         let showDogPath = true;
         let centerOnDrone = true;
         let lastData = null;
+        let boidsLatest = null;
+        let boidsHistory = [];
+        let selectedBoidsTrackId = null;
+        let showBoidsVectors = false;
+        let boidsVectorLines = [];
+        let lastReplayResetSerial = null;
+        let requestedReplayState = null;
+        let selectedReplayId = '';
+
+        function setupSidebarResize() {
+            const sidebar = document.getElementById('sidebar');
+            const handle = document.getElementById('sidebarResizeHandle');
+            if (!sidebar || !handle) return;
+
+            const minWidth = 300;
+            const maxWidth = () => Math.min(650, Math.floor(window.innerWidth * 0.48));
+
+            try {
+                const savedWidth = Number(localStorage.getItem('sheepRadarSidebarWidth'));
+                if (Number.isFinite(savedWidth) && savedWidth >= minWidth && savedWidth <= maxWidth()) {
+                    sidebar.style.width = `${savedWidth}px`;
+                }
+            } catch (_) {
+                // A storage policy should not prevent the dashboard from loading.
+            }
+
+            const updateHandlePosition = () => {
+                if (window.innerWidth <= 900) {
+                    handle.style.position = '';
+                    handle.style.left = '';
+                    handle.style.top = '';
+                    handle.style.bottom = '';
+                    handle.style.height = '';
+                    return;
+                }
+                const bounds = sidebar.getBoundingClientRect();
+                handle.style.position = 'fixed';
+                handle.style.left = `${Math.round(bounds.left)}px`;
+                handle.style.top = `${Math.round(bounds.top)}px`;
+                handle.style.bottom = 'auto';
+                handle.style.height = `${Math.round(bounds.height)}px`;
+            };
+
+            updateHandlePosition();
+
+            let resizing = false;
+            let pointerId = null;
+
+            const stopResizing = () => {
+                if (!resizing) return;
+                resizing = false;
+                pointerId = null;
+                document.body.classList.remove('sidebar-resizing');
+                try {
+                    localStorage.setItem('sheepRadarSidebarWidth', String(Math.round(sidebar.getBoundingClientRect().width)));
+                } catch (_) {
+                    // Remembering the width is optional.
+                }
+                updateHandlePosition();
+            };
+
+            handle.addEventListener('pointerdown', (event) => {
+                if (window.innerWidth <= 900) return;
+                resizing = true;
+                pointerId = event.pointerId;
+                handle.setPointerCapture?.(event.pointerId);
+                document.body.classList.add('sidebar-resizing');
+                event.preventDefault();
+            });
+
+            document.addEventListener('pointermove', (event) => {
+                if (!resizing || (pointerId !== null && event.pointerId !== pointerId)) return;
+                const width = Math.max(minWidth, Math.min(maxWidth(), window.innerWidth - event.clientX));
+                sidebar.style.width = `${width}px`;
+                updateHandlePosition();
+                event.preventDefault();
+            });
+
+            document.addEventListener('pointerup', stopResizing);
+            document.addEventListener('pointercancel', stopResizing);
+            window.addEventListener('resize', () => {
+                if (window.innerWidth <= 900) {
+                    sidebar.style.width = '';
+                    stopResizing();
+                } else if (sidebar.style.width) {
+                    sidebar.style.width = `${Math.max(minWidth, Math.min(maxWidth(), sidebar.getBoundingClientRect().width))}px`;
+                }
+                updateHandlePosition();
+            });
+            window.addEventListener('scroll', updateHandlePosition, {passive: true});
+        }
+
+        setupSidebarResize();
+
+        function setupVideoResize() {
+            const mainContent = document.querySelector('.main-content');
+            const handle = document.getElementById('mainContentResizeHandle');
+            const panel = document.getElementById('videoPanel');
+            if (!mainContent || !handle || !panel) return;
+
+            const minVideoHeight = 180;
+            const minMapHeight = 180;
+            const getMaxVideoHeight = () => Math.max(
+                minVideoHeight,
+                mainContent.clientHeight - handle.offsetHeight - minMapHeight
+            );
+
+            try {
+                const savedHeight = Number(localStorage.getItem('sheepRadarVideoHeight'));
+                if (Number.isFinite(savedHeight) && savedHeight >= minVideoHeight && savedHeight <= getMaxVideoHeight()) {
+                    panel.style.height = `${savedHeight}px`;
+                    panel.style.flexBasis = `${savedHeight}px`;
+                }
+            } catch (_) {
+                // A storage policy should not prevent the dashboard from loading.
+            }
+
+            let resizing = false;
+            let pointerId = null;
+
+            const stopResizing = () => {
+                if (!resizing) return;
+                resizing = false;
+                pointerId = null;
+                document.body.classList.remove('video-resizing');
+                try {
+                    localStorage.setItem('sheepRadarVideoHeight', String(Math.round(panel.getBoundingClientRect().height)));
+                } catch (_) {
+                    // Remembering the height is optional.
+                }
+                map.invalidateSize({animate: false});
+            };
+
+            handle.addEventListener('pointerdown', (event) => {
+                if (window.innerWidth <= 900 || panel.style.display === 'none') return;
+                resizing = true;
+                pointerId = event.pointerId;
+                handle.setPointerCapture?.(event.pointerId);
+                document.body.classList.add('video-resizing');
+                event.preventDefault();
+            });
+
+            document.addEventListener('pointermove', (event) => {
+                if (!resizing || (pointerId !== null && event.pointerId !== pointerId)) return;
+                const bounds = mainContent.getBoundingClientRect();
+                const height = Math.max(minVideoHeight, Math.min(getMaxVideoHeight(), bounds.bottom - event.clientY));
+                panel.style.height = `${height}px`;
+                panel.style.flexBasis = `${height}px`;
+                map.invalidateSize({animate: false});
+                event.preventDefault();
+            });
+
+            document.addEventListener('pointerup', stopResizing);
+            document.addEventListener('pointercancel', stopResizing);
+            window.addEventListener('resize', () => {
+                if (window.innerWidth <= 900) {
+                    stopResizing();
+                    return;
+                }
+                if (panel.style.height) {
+                    const height = Math.max(minVideoHeight, Math.min(getMaxVideoHeight(), panel.getBoundingClientRect().height));
+                    panel.style.height = `${height}px`;
+                    panel.style.flexBasis = `${height}px`;
+                }
+                map.invalidateSize({animate: false});
+            });
+        }
+
+        setupVideoResize();
         
         // Video element for MJPEG stream
         let videoElement = document.createElement('video');
@@ -595,9 +1101,312 @@
             document.getElementById('status').textContent = 'Disconnected';
             document.getElementById('status').className = 'status disconnected';
         });
+
+        async function loadReplayOptions() {
+            const select = document.getElementById('replaySelect');
+            try {
+                const response = await fetch('/replays');
+                const payload = await response.json();
+                const replays = Array.isArray(payload.replays) ? payload.replays : [];
+                select.innerHTML = '';
+                if (!replays.length) {
+                    select.innerHTML = '<option value="">No matching MP4/SRT pairs found</option>';
+                    return;
+                }
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = 'Choose a recording…';
+                select.appendChild(placeholder);
+                replays.forEach(replay => {
+                    const option = document.createElement('option');
+                    option.value = replay.id;
+                    const source = replay.id.startsWith('videos/') ? 'Local video' : 'Sample video';
+                    option.textContent = `${source} · ${replay.label}`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                select.innerHTML = '<option value="">Could not load replay list</option>';
+                document.getElementById('replayStatus').textContent = 'Replay list unavailable';
+            }
+        }
+
+        function selectReplay(replayId) {
+            selectedReplayId = replayId || '';
+            if (!selectedReplayId) {
+                document.getElementById('replayStatus').textContent = '';
+                return;
+            }
+            const selectedOption = Array.from(document.getElementById('replaySelect').options)
+                .find(option => option.value === selectedReplayId);
+            document.getElementById('replayStatus').textContent = selectedOption ? `Ready: ${selectedOption.textContent}. Press Start selected video.` : 'Recording ready to start';
+        }
+
+        function startSelectedReplay() {
+            if (!selectedReplayId) {
+                document.getElementById('replayStatus').textContent = 'Choose a recording first';
+                return;
+            }
+            const status = document.getElementById('replayStatus');
+            const button = document.getElementById('replayStartButton');
+            status.textContent = 'Switching replay…';
+            button.disabled = true;
+            socket.emit('select_replay', {id: selectedReplayId}, function(result) {
+                button.disabled = false;
+                if (result && result.ok) {
+                    status.textContent = `Playing ${result.label}; resetting detection…`;
+                } else {
+                    status.textContent = (result && result.error) || 'Could not select replay';
+                }
+            });
+        }
+
+        loadReplayOptions();
+
+        socket.on('boids_analysis_update', function(result) {
+            boidsLatest = result;
+            renderBoids();
+        });
+
+        socket.on('boids_analysis_history', function(history) {
+            boidsHistory = Array.isArray(history) ? history.slice(-240) : [];
+            renderBoids();
+        });
+
+        function formatBoidsValue(value) {
+            return value === null || value === undefined || !Number.isFinite(Number(value)) ? '--' : Number(value).toFixed(3);
+        }
+
+        function sentenceCase(value) {
+            const text = String(value ?? '').replaceAll('_', ' ').trim().toLowerCase();
+            return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+        }
+
+        function formatReplayTime(value) {
+            const totalSeconds = Math.max(0, Math.floor(Number(value) || 0));
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            if (hours > 0) {
+                return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            }
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+
+        function updateReplayTime(replay) {
+            if (!replay) return;
+            const current = Math.max(0, Number(replay.current_time_s) || 0);
+            const duration = Math.max(0, Number(replay.duration_s ?? replay.end_time_s) || 0);
+            const percentage = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
+            const reportedState = replay.state || (replay.playing === false ? 'ended' : 'playing');
+            if (requestedReplayState && reportedState === requestedReplayState) {
+                requestedReplayState = null;
+            }
+            const effectiveState = requestedReplayState || reportedState;
+            const isPlaying = effectiveState === 'playing';
+            document.getElementById('replayVideoName').textContent = replay.video_name || 'Replay video';
+            document.getElementById('replayPlayingState').textContent = effectiveState === 'paused' ? 'Paused' : (isPlaying ? 'Playing' : 'Ended');
+            document.getElementById('replayPlayPause').textContent = isPlaying ? 'Pause' : 'Play';
+            document.getElementById('replayStartTime').textContent = `Start ${formatReplayTime(replay.start_time_s)}`;
+            document.getElementById('replayCurrentTime').textContent = `Current ${formatReplayTime(current)}`;
+            document.getElementById('replayEndTime').textContent = `End ${formatReplayTime(duration)}`;
+            document.getElementById('replayProgressFill').style.width = `${percentage}%`;
+        }
+
+        function sendReplayControl(command, onFailure) {
+            socket.emit('replay_control', {command: command}, function(result) {
+                if (!result || !result.ok) {
+                    document.getElementById('replayPlayingState').textContent = (result && result.error) || 'Control unavailable';
+                    if (onFailure) onFailure();
+                }
+            });
+        }
+
+        function toggleReplayPlayback() {
+            const button = document.getElementById('replayPlayPause');
+            const wasPlaying = button.textContent.trim() === 'Pause';
+            const previousLabel = button.textContent;
+            const nextLabel = wasPlaying ? 'Play' : 'Pause';
+            requestedReplayState = wasPlaying ? 'paused' : 'playing';
+            button.textContent = nextLabel;
+            document.getElementById('replayPlayingState').textContent = wasPlaying ? 'Paused' : 'Playing';
+            sendReplayControl(wasPlaying ? 'pause' : 'play', function() {
+                requestedReplayState = null;
+                button.textContent = previousLabel;
+            });
+        }
+
+        function resetReplayTracking() {
+            sendReplayControl('reset');
+            document.getElementById('replayPlayingState').textContent = 'Resetting';
+        }
+
+        function clearSheepTrails() {
+            for (const id in sheepTrails) {
+                map.removeLayer(sheepTrails[id]);
+                delete sheepTrails[id];
+            }
+        }
+
+        function sheepPopupHtml(sheep) {
+            const result = boidsLatest;
+            let coefficients = {};
+            let scope = 'No current Boids estimate';
+            if (result) {
+                const track = result.per_track && result.per_track[String(sheep.id)];
+                if (track && track.coefficients) {
+                    coefficients = track.coefficients;
+                    scope = 'Per-sheep fitted estimate';
+                } else {
+                    coefficients = result.coefficients || {};
+                    scope = 'Observed flock estimate';
+                }
+            }
+            return `<b>Sheep ${sheep.id}</b><br>` +
+                `Lat: ${Number(sheep.latitude).toFixed(6)}<br>` +
+                `Lon: ${Number(sheep.longitude).toFixed(6)}` +
+                `<div class="sheep-boids-popup"><div class="popup-title">Boids parameters · ${scope}</div>` +
+                `<div class="popup-cohesion">Cohesion: ${formatBoidsValue(coefficients.cohesion)}</div>` +
+                `<div class="popup-alignment">Alignment: ${formatBoidsValue(coefficients.alignment)}</div>` +
+                `<div class="popup-separation">Separation: ${formatBoidsValue(coefficients.separation)}</div>` +
+                `<div class="popup-boundary">Boundary: ${formatBoidsValue(coefficients.boundary)}</div></div>`;
+        }
+
+        function renderBoids() {
+            const result = boidsLatest;
+            const status = document.getElementById('boidsStatus');
+            if (!result) {
+                status.textContent = 'Collecting movement data';
+                status.className = 'boids-status';
+                return;
+            }
+            let coefficients = result.coefficients || {};
+            let scope = 'observed flock';
+            if (selectedBoidsTrackId && result.per_track && result.per_track[selectedBoidsTrackId]) {
+                coefficients = result.per_track[selectedBoidsTrackId].coefficients || {};
+                scope = `track ${selectedBoidsTrackId}`;
+            }
+            document.getElementById('boidsCohesion').textContent = formatBoidsValue(coefficients.cohesion);
+            document.getElementById('boidsAlignment').textContent = formatBoidsValue(coefficients.alignment);
+            document.getElementById('boidsSeparation').textContent = formatBoidsValue(coefficients.separation);
+            status.textContent = `${sentenceCase(result.status || 'unknown')} · ${sentenceCase(scope)}`;
+            status.className = `boids-status ${result.status === 'ok' ? 'ok' : (result.status === 'error' ? 'error' : '')}`;
+            const quality = result.quality || {};
+            const reasons = (quality.reason_codes || []).join(', ') || 'none';
+            document.getElementById('boidsMeta').textContent =
+                `Observed sheep: ${quality.observed_tracks ?? 0} · Samples: ${quality.usable_samples ?? 0} · ` +
+                `Window: ${Number(quality.window_duration_s || 0).toFixed(1)}s · RMSE: ${formatBoidsValue(quality.acceleration_rmse_m_s2)} m/s² · ` +
+                `Reasons: ${reasons}`;
+            document.getElementById('boidsTechnical').textContent = JSON.stringify({
+                active_features: result.active_features,
+                units: result.units,
+                model: result.model,
+                selected_track: selectedBoidsTrackId,
+            }, null, 2);
+            renderBoidsChart();
+            renderBoidsVectors();
+        }
+
+        function toggleBoidsVectors() {
+            showBoidsVectors = document.getElementById('toggleBoidsVectors').checked;
+            renderBoidsVectors();
+        }
+
+        function renderBoidsVectors() {
+            boidsVectorLines.forEach(line => map.removeLayer(line));
+            boidsVectorLines = [];
+            if (!showBoidsVectors || !boidsLatest || !lastData || !lastData.sheep) return;
+            const frame = boidsLatest.model && boidsLatest.model.coordinate_frame;
+            if (!frame || frame.origin_latitude === null || !boidsLatest.vectors) return;
+            const latScale = 1 / 111320.0;
+            const lonScale = 1 / (111320.0 * Math.cos(Number(frame.origin_latitude) * Math.PI / 180));
+            const displayScale = 8.0; // metres per m/s², display-only scaling
+            const colours = {cohesion: '#2563eb', alignment: '#16a34a', separation: '#dc2626', boundary: '#9333ea'};
+            const labels = {cohesion: 'Cohesion', alignment: 'Alignment', separation: 'Separation', boundary: 'Boundary'};
+            lastData.sheep.forEach(sheep => {
+                const trackId = String(sheep.id);
+                const vectors = boidsLatest.vectors[trackId] || boidsLatest.vectors[sheep.id];
+                if (!vectors) return;
+                Object.entries(vectors).forEach(([name, vector]) => {
+                    const east = Number(vector.x_m_s2) * displayScale;
+                    const north = Number(vector.y_m_s2) * displayScale;
+                    if (!Number.isFinite(east) || !Number.isFinite(north) || Math.hypot(east, north) < 0.001) return;
+                    const endpoint = [sheep.latitude + north * latScale, sheep.longitude + east * lonScale];
+                    const line = L.polyline([[sheep.latitude, sheep.longitude], endpoint], {
+                        color: colours[name] || '#111827', weight: 3, opacity: 0.8
+                    }).addTo(map).bindTooltip(`${labels[name] || name} · Sheep ${trackId}<br>Display-scaled vector`);
+                    boidsVectorLines.push(line);
+                });
+            });
+        }
+
+        function renderBoidsChart() {
+            const chart = document.getElementById('boidsChart');
+            if (!chart) return;
+            const values = boidsHistory.filter(item => item && item.coefficients && (!boidsLatest || (
+                item.session_id === boidsLatest.session_id &&
+                item.segment_id === boidsLatest.segment_id &&
+                (!item.model || !boidsLatest.model || item.model.configuration_hash === boidsLatest.model.configuration_hash)
+            )));
+            if (!values.length || !window.Plotly) {
+                if (window.Plotly) Plotly.purge(chart);
+                chart.textContent = values.length ? 'Chart library unavailable.' : '';
+                return;
+            }
+
+            const series = [
+                {key: 'cohesion', name: 'Cohesion', colour: '#2563eb'},
+                {key: 'alignment', name: 'Alignment', colour: '#16a34a'},
+                {key: 'separation', name: 'Separation', colour: '#dc2626'},
+                {key: 'boundary', name: 'Boundary', colour: '#9333ea'},
+            ];
+            const xValues = values.map((item, index) => {
+                const candidate = item.window_end_s ?? item.publication_time_s ?? item.window_start_s;
+                return Number.isFinite(Number(candidate)) ? Number(candidate) : index;
+            });
+            const traces = series.filter(seriesItem => values.some(item => Number.isFinite(Number(item.coefficients[seriesItem.key]))))
+                .map(seriesItem => ({
+                    x: xValues,
+                    y: values.map(item => {
+                        const value = Number(item.coefficients[seriesItem.key]);
+                        return Number.isFinite(value) ? value : null;
+                    }),
+                    name: seriesItem.name,
+                    mode: 'lines',
+                    connectgaps: false,
+                    line: {color: seriesItem.colour, width: 2},
+                    hovertemplate: `${seriesItem.name}: %{y:.3f}<extra></extra>`,
+                }));
+            Plotly.react(chart, traces, {
+                height: 188,
+                margin: {l: 44, r: 12, t: 28, b: 34},
+                paper_bgcolor: 'transparent',
+                plot_bgcolor: '#ffffff',
+                font: {family: 'Segoe UI, sans-serif', size: 10, color: '#475467'},
+                hovermode: 'x unified',
+                showlegend: true,
+                legend: {orientation: 'h', x: 0, y: 1.18, font: {size: 10}},
+                xaxis: {title: 'Time (s)', gridcolor: '#e5e7eb', zeroline: false},
+                yaxis: {title: 'Coefficient', gridcolor: '#e5e7eb', zeroline: true, zerolinecolor: '#d1d5db'},
+            }, {displayModeBar: false, responsive: true});
+        }
         
         socket.on('map_update', function(data) {
             lastData = data;
+            updateReplayTime(data.replay);
+            if (data.replay_reset_serial !== undefined && data.replay_reset_serial !== lastReplayResetSerial) {
+                if (lastReplayResetSerial !== null) clearSheepTrails();
+                lastReplayResetSerial = data.replay_reset_serial;
+                selectedBoidsTrackId = null;
+                boidsVectorLines.forEach(line => map.removeLayer(line));
+                boidsVectorLines = [];
+            }
+            if (data.boids_analysis === null) {
+                selectedBoidsTrackId = null;
+            }
+            if (data.boids_analysis) {
+                boidsLatest = data.boids_analysis;
+                renderBoids();
+            }
             // Update drone position
             if (data.drone) {
                 const lat = data.drone.latitude;
@@ -647,10 +1456,14 @@
                             weight: 2,
                             opacity: 1,
                             fillOpacity: 0.8
-                        }).addTo(map).bindPopup(`<b>Sheep ${sheep.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
+                        }).addTo(map).bindPopup(sheepPopupHtml(sheep)).on('click', function() {
+                            selectedBoidsTrackId = String(sheep.id);
+                            sheepMarkers[sheep.id].setPopupContent(sheepPopupHtml(sheep));
+                            renderBoids();
+                        });
                     } else {
                         sheepMarkers[sheep.id].setLatLng([lat, lon]);
-                        sheepMarkers[sheep.id].setPopupContent(`<b>Sheep ${sheep.id}</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`);
+                        sheepMarkers[sheep.id].setPopupContent(sheepPopupHtml(sheep));
                     }
                 }
                 
@@ -1111,8 +1924,14 @@
         function toggleVideoPanel() {
             showVideoPanel = document.getElementById('toggleVideoPanel').checked;
             const panel = document.getElementById('videoPanel');
+            const handle = document.getElementById('mainContentResizeHandle');
             if (!panel) return;
             panel.style.display = showVideoPanel ? 'flex' : 'none';
+            if (handle) handle.style.display = showVideoPanel ? '' : 'none';
+            requestAnimationFrame(() => {
+                map.invalidateSize({animate: false});
+                if (showVideoPanel && lastData) handleMapUpdate(lastData);
+            });
         }
 
         function toggleSimSheep() {
@@ -1137,6 +1956,14 @@
                 const lat = lastData.drone.latitude;
                 const lon = lastData.drone.longitude;
                 map.setView([lat, lon], map.getZoom());
+            }
+        }
+
+        function toggleMapGrayscale() {
+            const checkbox = document.getElementById('toggleMapGrayscale');
+            const mapElement = document.getElementById('map');
+            if (checkbox && mapElement) {
+                mapElement.classList.toggle('map-grayscale', checkbox.checked);
             }
         }
 

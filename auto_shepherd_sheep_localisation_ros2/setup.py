@@ -12,6 +12,7 @@ setup(
         package_name,
         f"{package_name}.detection_process",
         f"{package_name}.detection_process.modules",
+        f"{package_name}.utils",
     ],
     package_data={
         package_name: [
@@ -28,7 +29,13 @@ setup(
         (f"share/{pkg}/config", glob(os.path.join("config", "*.yaml"))),
         (f"share/{pkg}", ["package.xml"]),
     ],
-    install_requires=["setuptools", "flask", "flask-socketio", "python-socketio"],
+    install_requires=[
+        "setuptools",
+        "numpy>=1.22,<2",
+        "flask",
+        "flask-socketio",
+        "python-socketio",
+    ],
     zip_safe=False,
     maintainer="james",
     maintainer_email="primordia@live.com",
@@ -39,6 +46,8 @@ setup(
             f"data_loader_node.py = {pkg}.data_loader_node:main",
             f"detect_sheep.py = {pkg}.detect_sheep:main",
             f"map_visualiser_node.py = {pkg}.map_visualiser_node:main",
+            f"boids_analysis_node.py = {pkg}.boids_analysis_node:main",
+            f"boids_demo_node.py = {pkg}.boids_demo_node:main",
         ],
     },
 )

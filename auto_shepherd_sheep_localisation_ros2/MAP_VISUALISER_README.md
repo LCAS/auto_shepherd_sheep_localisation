@@ -115,6 +115,65 @@ def cluster_sheep(self, positions, radius_m=15.0):  # Radius in meters
 ros2 run auto_shepherd_sheep_localisation_ros2 map_visualiser_node.py
 ```
 
+## Sheep Radar Boids analysis
+
+The package includes a separate `boids_analysis_node.py`. It consumes the
+timestamped visible-track snapshots on `/sheep_paths`, converts GPS to a fixed
+local east/north metric frame, maintains bounded causal motion histories, and
+publishes versioned JSON results on `/sheep/boids_analysis`. It fits
+non-negative rolling gains for cohesion, alignment, separation, and (when a
+field boundary is available) boundary avoidance. Coefficients are model gains,
+not percentages; the feature vectors and fitted acceleration target are in
+`m/s^2`.
+
+The injected tmule launch starts the visualiser, analysis node, detector, and
+replay loader. RViz is intentionally not part of this launch:
+
+```bash
+cd /home/carrot/code/auto_shepherd/auto_shepherd_sheep_localisation/docker
+docker compose run --rm auto_shepherd_sheep_localisation_ros2_humble bash
+
+cd /home/ros/base_ws/src/auto_shepherd_sheep_localisation_ros2/tmule
+tmule -c injected.tmule.yaml launch
+```
+
+Open `http://localhost:8080`. The dashboard shows a warming-up state until the
+configured 30-second minimum window is available. Results are persisted in
+SQLite at `/home/ros/data/boids.sqlite3`, mounted from the repository's
+`data/` directory, and can be read from `/boids/history` or exported at
+`/boids/export.csv`.
+
+The **Replay video** section lists MP4/SRT pairs from
+`detection_process/models/videos`, `models/samples/sample_clip`, and other
+sample subfolders. Files are listed only when the MP4 has a matching SRT with
+the same filename stem. Selecting a replay restarts the loader, detector
+tracking, dashboard trails, and Boids segment from frame one.
+
+The video timeline includes **Pause/Play** and **Reset tracking** controls.
+Reset tracking restarts the selected replay at frame one and clears tracker
+IDs, sheep trails, Boids history, and map overlay vectors.
+
+Click a detected sheep marker to select it. When sufficient independent history
+exists, the analysis panel will show that track's estimate; the optional **Boids vectors** overlay draws
+the current cohesion, alignment, separation, and boundary vectors for every
+currently visible detected sheep. The selected sheep still controls the
+per-track estimate shown in the analysis panel. Blue, green, red, and purple
+arrows represent cohesion, alignment, separation, and boundary influence
+respectively. Arrow lengths are display-scaled (8 metres per `m/s^2`) and are
+not calibrated force magnitudes.
+
+For a detector-free seeded smoke demonstration, run the visualiser and
+analysis node as above, then in another container shell run:
+
+```bash
+ros2 run auto_shepherd_sheep_localisation_ros2 boids_demo_node.py
+```
+
+Use `--ros-args -p minimum_window_s:=5.0 -p minimum_samples:=20` on the
+analysis node for a short demo only; those are not recommended real-data
+defaults. The synthetic stream is labelled `source_type=simulation` and is
+not a welfare or health baseline.
+
 ## Technical Details
 
 ### FOV Calculation

@@ -39,3 +39,12 @@ ros2 run auto_shepherd_sheep_localisation_ros2 data_loader_node.py --ros-args \
 ## Notes
 - rel_alt and abs_alt are included in the JSON on `/drone`; only abs_alt is set in NavSatFix.
 - The node syncs telemetry to video time; enable loop_video to repeat playback.
+
+## Dashboard replay selection
+
+When the full dashboard launch is running, the **Replay video** dropdown lists
+MP4 files under `detection_process/models/videos` and
+`detection_process/models/samples` only when a same-name `.srt` file exists.
+Selecting an entry publishes a request on `/drone/select_replay`; the loader
+stops the current stream, resets the replay segment, and starts the selected
+MP4/SRT pair from its first frame.

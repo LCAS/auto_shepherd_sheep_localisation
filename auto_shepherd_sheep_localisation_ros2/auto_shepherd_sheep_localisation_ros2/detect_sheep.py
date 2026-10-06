@@ -10,6 +10,7 @@ import cv2
 import math
 
 from sensor_msgs.msg import Image, NavSatFix
+from std_msgs.msg import Empty
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped, Vector3Stamped
 
@@ -49,6 +50,7 @@ class SheepDetector(Node):
         # subscribe to latched GPS and live image topics
         self.create_subscription(NavSatFix, "/drone/gps", self.gps_cb, self.qos())
         self.create_subscription(Image, "/drone/image", self.image_cb, 10)
+        self.create_subscription(Empty, "/drone/replay_reset", self.replay_reset_cb, 10)
 
         # subscribe to drone attitude and gimbal for accurate GPS conversion
         self.create_subscription(
@@ -75,6 +77,11 @@ class SheepDetector(Node):
         )
         self.bridge = CvBridge()
         self.get_logger().info("✅ Sheep Detector Node Ready - Waiting for images...")
+
+    def replay_reset_cb(self, _msg: Empty):
+        """Start a fresh ByteTrack ID namespace when replay restarts."""
+        self.SD.reset_tracker()
+        self.get_logger().info("🔄 Replay reset received; ByteTrack IDs restarted")
 
     # convenience method for QoS profile matching publisher
     def qos(self):
