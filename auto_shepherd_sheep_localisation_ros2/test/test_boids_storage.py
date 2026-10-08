@@ -14,7 +14,7 @@ def test_storage_round_trip_and_csv(tmp_path):
         "window_start_s": 0.0,
         "window_end_s": 1.0,
         "status": "insufficient_data",
-        "coefficients": {"cohesion": None, "alignment": None, "separation": None, "boundary": None},
+        "coefficients": {"cohesion": None, "alignment": None, "separation": None},
         "active_features": ["cohesion", "alignment", "separation"],
         "quality": {"usable_samples": 0, "observed_tracks": 0, "acceleration_rmse_m_s2": None, "reason_codes": ["warming_up"]},
         "publication_time_s": 1.0,
@@ -24,4 +24,8 @@ def test_storage_round_trip_and_csv(tmp_path):
     csv_text = storage.export_csv(storage.history())
     assert "acceleration_rmse_m_s2" in csv_text
     assert "warming_up" in csv_text
+    assert storage.delete_session("demo") == 1
+    assert storage.history(session_id="demo") == []
+    assert storage.latest("demo") is None
+    assert storage.save(result) is False
     storage.close()

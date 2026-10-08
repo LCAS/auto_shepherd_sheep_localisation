@@ -11,7 +11,10 @@ model gains, not percentages:
 * cohesion: normalized vector to the mean neighbour position;
 * alignment: normalized difference between neighbour and subject velocity;
 * separation: repulsion weighted by distance inside the separation radius;
-* boundary: normalized vector away from the nearest polygon edge.
+
+Boundary geometry is intentionally not part of the current estimator. The
+standalone boundary helper below is retained for a future model version, but
+the MVP fits only cohesion, alignment, and separation.
 
 Fixed configured scales make the feature definitions comparable across
 windows.  They are not re-normalized during fitting.
@@ -28,7 +31,7 @@ from typing import Deque, Dict, Iterable, List, Mapping, Optional, Sequence, Tup
 import numpy as np
 
 
-FEATURES = ("cohesion", "alignment", "separation", "boundary")
+FEATURES = ("cohesion", "alignment", "separation")
 
 
 @dataclass
@@ -41,15 +44,17 @@ class BoidsConfig:
     maximum_gap_s: float = 2.0
     neighbour_radius_m: float = 15.0
     separation_radius_m: float = 5.0
-    boundary_radius_m: float = 15.0
     cohesion_accel_scale: float = 0.5
     alignment_accel_scale: float = 0.5
     separation_accel_scale: float = 1.0
-    boundary_accel_scale: float = 0.5
     regularisation: float = 0.01
     condition_limit: float = 1.0e6
     stale_after_s: float = 5.0
     max_history_s: float = 180.0
+    outlier_min_samples: int = 10
+    outlier_z_threshold: float = 3.5
+    outlier_persistence_s: float = 5.0
+    stopping_speed_threshold_m_s: float = 0.2
 
 
 @dataclass
@@ -64,7 +69,7 @@ class MotionPoint:
 class RegressionSample:
     timestamp: float
     target: np.ndarray
-    features: np.ndarray  # shape (4, 2)
+    features: np.ndarray  # shape (3, 2)
     track_id: str
 
 
@@ -150,42 +155,41 @@ class BoidsEstimator:
         self.track_samples: Dict[str, Deque[RegressionSample]] = defaultdict(deque)
         self.latest_features: Dict[str, np.ndarray] = {}
         self.latest_positions: Dict[str, np.ndarray] = {}
-        self.boundary: Optional[List[np.ndarray]] = None
-        self.boundary_revision: Optional[str] = None
         self.latest_timestamp: Optional[float] = None
         self.last_batch_timestamp: Optional[float] = None
         self.last_publish_timestamp: Optional[float] = None
         self.segment_number = 1
         self.rejection_counts: Dict[str, int] = defaultdict(int)
         self.last_reasons: List[str] = []
-        self.out_of_bound_count = 0
+        self.outlier_state: Dict[str, dict] = {}
         self.source_session = "session_001"
         self.source_type = "replay"
         self.field_id = "field_default"
+        self.source_replay_id: Optional[str] = None
+        self.detector_model_id: Optional[str] = None
         self._last_result: Optional[dict] = None
 
     @property
     def segment_id(self) -> str:
         return f"segment_{self.segment_number:03d}"
 
-    def configure_identity(self, session_id: str, field_id: str, source_type: str) -> None:
+    def configure_identity(
+        self,
+        session_id: str,
+        field_id: str,
+        source_type: str,
+        replay_id: Optional[str] = None,
+        detector_model_id: Optional[str] = None,
+    ) -> None:
         self.source_session = session_id
         self.field_id = field_id
         self.source_type = source_type
+        self.source_replay_id = replay_id
+        self.detector_model_id = detector_model_id
 
     def reset_segment(self, reason: str = "replay_reset") -> None:
         """Discard motion history when a source starts a new replay segment."""
         self._clear_segment(reason)
-
-    def set_boundary(self, points: Optional[Iterable[Sequence[float]]], revision: Optional[str] = None) -> None:
-        if points is None:
-            self.boundary = None
-            self.boundary_revision = None
-            return
-        converted = [_finite_vector(point) for point in points]
-        converted = [point for point in converted if point is not None]
-        self.boundary = converted if len(converted) >= 3 else None
-        self.boundary_revision = revision or (f"boundary_{len(converted)}" if self.boundary else None)
 
     def _clear_segment(self, reason: str) -> None:
         self.tracks.clear()
@@ -193,9 +197,9 @@ class BoidsEstimator:
         self.track_samples.clear()
         self.latest_features.clear()
         self.latest_positions.clear()
+        self.outlier_state.clear()
         self.latest_timestamp = None
         self.last_batch_timestamp = None
-        self.out_of_bound_count = 0
         self.last_publish_timestamp = None
         self.segment_number += 1
         self.rejection_counts[reason] += 1
@@ -299,15 +303,7 @@ class BoidsEstimator:
             alignment = alignment / alignment_count * cfg.alignment_accel_scale
         if neighbour_count:
             separation = separation / neighbour_count * cfg.separation_accel_scale
-        boundary, outside, _ = boundary_feature(
-            point.position,
-            self.boundary,
-            cfg.boundary_radius_m,
-            cfg.boundary_accel_scale,
-        )
-        if outside:
-            self.out_of_bound_count += 1
-        return np.vstack((cohesion, alignment, separation, boundary))
+        return np.vstack((cohesion, alignment, separation))
 
     def _prune_samples(self, timestamp: float) -> None:
         cutoff = timestamp - self.config.fit_window_s
@@ -318,6 +314,160 @@ class BoidsEstimator:
                 samples.popleft()
             if not samples:
                 del self.track_samples[track_id]
+
+    def _motion_metrics(self, timestamp: float) -> Dict[str, dict]:
+        """Calculate explainable per-track movement indicators.
+
+        These are screening features, not welfare or lameness diagnoses.  A
+        track is compared with the other tracks visible in the same rolling
+        snapshot window using speed, stopping fraction, and distance from the
+        current flock centre.
+        """
+        cutoff = timestamp - self.config.fit_window_s
+        positions = list(self.latest_positions.values())
+        if not positions:
+            return {}
+        flock_centre = np.mean(np.asarray(positions, dtype=float), axis=0)
+        metrics = {}
+        for track_id, track in self.tracks.items():
+            points = [point for point in track.points if point.timestamp >= cutoff]
+            speeds = [
+                float(np.linalg.norm(point.velocity))
+                for point in points
+                if point.velocity is not None and np.all(np.isfinite(point.velocity))
+            ]
+            if len(speeds) < self.config.outlier_min_samples:
+                continue
+            latest = self.latest_positions.get(track_id)
+            if latest is None:
+                continue
+            neighbours = [
+                other_position
+                for other_id, other_position in self.latest_positions.items()
+                if other_id != track_id
+                and float(np.linalg.norm(other_position - latest)) <= self.config.neighbour_radius_m
+            ]
+            indicators = {"cohesion": None, "alignment": None, "separation": None}
+            if neighbours:
+                local_centre = np.mean(np.asarray(neighbours, dtype=float), axis=0)
+                local_distance = float(np.linalg.norm(local_centre - latest))
+                indicators["cohesion"] = float(
+                    1.0 - min(local_distance / max(self.config.neighbour_radius_m, 1.0e-9), 1.0)
+                )
+
+            nearest_distance = min(
+                (
+                    float(np.linalg.norm(other_position - latest))
+                    for other_id, other_position in self.latest_positions.items()
+                    if other_id != track_id
+                ),
+                default=None,
+            )
+            if nearest_distance is not None:
+                indicators["separation"] = float(
+                    1.0 - min(nearest_distance / max(self.config.separation_radius_m, 1.0e-9), 1.0)
+                )
+
+            subject_velocity = track.points[-1].velocity if track.points else None
+            alignment_scores = []
+            if subject_velocity is not None:
+                subject_speed = float(np.linalg.norm(subject_velocity))
+                if subject_speed > self.config.stopping_speed_threshold_m_s:
+                    for other_id in self.latest_positions:
+                        if other_id == track_id or other_id not in self.tracks:
+                            continue
+                        other_points = self.tracks[other_id].points
+                        other_velocity = other_points[-1].velocity if other_points else None
+                        if other_velocity is None:
+                            continue
+                        other_speed = float(np.linalg.norm(other_velocity))
+                        if other_speed <= self.config.stopping_speed_threshold_m_s:
+                            continue
+                        cosine = float(np.dot(subject_velocity, other_velocity) / (subject_speed * other_speed))
+                        alignment_scores.append(max(-1.0, min(1.0, cosine)))
+            if alignment_scores:
+                indicators["alignment"] = float((float(np.mean(alignment_scores)) + 1.0) / 2.0)
+            metrics[track_id] = {
+                "mean_speed_m_s": float(np.mean(speeds)),
+                "stopping_fraction": float(
+                    np.mean(np.asarray(speeds) <= self.config.stopping_speed_threshold_m_s)
+                ),
+                "distance_from_flock_m": float(np.linalg.norm(latest - flock_centre)),
+                "usable_samples": len(speeds),
+                "normalised_indicators": indicators,
+            }
+        return metrics
+
+    @staticmethod
+    def _robust_z(value: float, values: Sequence[float]) -> float:
+        """Return a finite modified z-score, with a standard-deviation fallback."""
+        array = np.asarray(values, dtype=float)
+        median = float(np.median(array))
+        mad = float(np.median(np.abs(array - median)))
+        scale = 1.4826 * mad
+        if scale <= 1.0e-9:
+            scale = float(np.std(array))
+        if scale <= 1.0e-9:
+            return 0.0
+        return float((value - median) / scale)
+
+    def _classify_outliers(self, timestamp: float) -> Tuple[Dict[str, dict], List[str], dict]:
+        """Classify persistent movement differences relative to the observed flock."""
+        metrics = self._motion_metrics(timestamp)
+        if len(metrics) < 3:
+            return metrics, [], {
+                "status": "unavailable",
+                "reason": "too_few_tracks_for_comparison",
+                "eligible_tracks": len(metrics),
+                "threshold": self.config.outlier_z_threshold,
+            }
+
+        metric_values = {
+            name: [item[name] for item in metrics.values()]
+            for name in ("mean_speed_m_s", "stopping_fraction", "distance_from_flock_m")
+        }
+        flagged = []
+        for track_id, item in metrics.items():
+            z_scores = {
+                "mean_speed_m_s": self._robust_z(item["mean_speed_m_s"], metric_values["mean_speed_m_s"]),
+                "stopping_fraction": self._robust_z(item["stopping_fraction"], metric_values["stopping_fraction"]),
+                "distance_from_flock_m": self._robust_z(item["distance_from_flock_m"], metric_values["distance_from_flock_m"]),
+            }
+            reasons = []
+            threshold = self.config.outlier_z_threshold
+            if z_scores["mean_speed_m_s"] <= -threshold:
+                reasons.append("low_speed_relative_to_flock")
+            if z_scores["stopping_fraction"] >= threshold:
+                reasons.append("frequent_stopping_relative_to_flock")
+            if z_scores["distance_from_flock_m"] >= threshold:
+                reasons.append("distance_from_flock_relative_to_flock")
+            candidate = bool(reasons)
+            state = self.outlier_state.setdefault(track_id, {"last_timestamp": None, "duration_s": 0.0})
+            previous_timestamp = state.get("last_timestamp")
+            if candidate and previous_timestamp is not None:
+                gap = timestamp - float(previous_timestamp)
+                if 0.0 < gap <= self.config.maximum_gap_s:
+                    state["duration_s"] += gap
+                elif gap > self.config.maximum_gap_s:
+                    state["duration_s"] = 0.0
+            elif not candidate:
+                state["duration_s"] = 0.0
+            state["last_timestamp"] = timestamp
+            persistent = candidate and state["duration_s"] >= self.config.outlier_persistence_s
+            item["robust_z_scores"] = z_scores
+            item["candidate_flag"] = candidate
+            item["persistent_flag"] = persistent
+            item["persistence_duration_s"] = float(state["duration_s"])
+            item["reason_codes"] = reasons
+            if persistent:
+                flagged.append(str(track_id))
+        return metrics, flagged, {
+            "status": "ok",
+            "eligible_tracks": len(metrics),
+            "threshold": self.config.outlier_z_threshold,
+            "persistence_required_s": self.config.outlier_persistence_s,
+            "comparison": "within-session observed flock; robust modified z-scores",
+        }
 
     def should_publish(self) -> bool:
         if self.latest_timestamp is None:
@@ -395,7 +545,7 @@ class BoidsEstimator:
         wall_timestamp = wall_timestamp if wall_timestamp is not None else time.time()
         cutoff = timestamp - self.config.fit_window_s
         samples = [sample for sample in self.samples if sample.timestamp >= cutoff]
-        active_indices = [0, 1, 2] + ([3] if self.boundary else [])
+        active_indices = [0, 1, 2]
         active_features = [FEATURES[index] for index in active_indices]
         coefficients = {name: None for name in FEATURES}
         reasons: List[str] = []
@@ -409,13 +559,7 @@ class BoidsEstimator:
             "window_duration_s": duration,
             "rejections": dict(self.rejection_counts),
             "diagnostics": {},
-            "boundary_available": bool(self.boundary),
-            "out_of_bound_positions": self.out_of_bound_count,
         }
-        if not self.boundary:
-            reasons.append("boundary_unavailable")
-        if self.out_of_bound_count:
-            reasons.append("out_of_bound_position")
         if not samples:
             status = "insufficient_data"
             reasons.append("no_usable_samples")
@@ -440,6 +584,15 @@ class BoidsEstimator:
             reasons.append("source_stale")
         quality["reason_codes"] = sorted(set(reasons))
 
+        motion_metrics, outliers, outlier_summary = self._classify_outliers(timestamp)
+        flock_indicators = {}
+        for name in ("cohesion", "alignment", "separation"):
+            values = [
+                item["normalised_indicators"][name]
+                for item in motion_metrics.values()
+                if item["normalised_indicators"].get(name) is not None
+            ]
+            flock_indicators[name] = float(np.mean(values)) if values else None
         per_track = {}
         for track_id, track_samples in self.track_samples.items():
             usable = [sample for sample in track_samples if sample.timestamp >= cutoff]
@@ -462,6 +615,23 @@ class BoidsEstimator:
                 "window_duration_s": track_duration,
             }
 
+        # Keep movement screening information separate from fitted coefficients:
+        # a sheep can have enough data for an outlier screen without having an
+        # identifiable per-track Boids fit.
+        for track_id, metrics in motion_metrics.items():
+            entry = per_track.setdefault(
+                track_id,
+                {
+                    "track_id": track_id,
+                    "coefficients": {name: None for name in FEATURES},
+                    "status": "insufficient_data",
+                    "usable_samples": 0,
+                    "window_duration_s": 0.0,
+                },
+            )
+            entry["movement_metrics"] = metrics
+            entry["movement_outlier"] = metrics
+
         vectors = {}
         for track_id, features in self.latest_features.items():
             vectors[track_id] = {
@@ -472,6 +642,8 @@ class BoidsEstimator:
             "schema_version": 1,
             "source_type": self.source_type,
             "session_id": self.source_session,
+            "replay_id": self.source_replay_id,
+            "detector_model_id": self.detector_model_id,
             "segment_id": self.segment_id,
             "field_id": self.field_id,
             "scope": "observed_flock",
@@ -484,6 +656,7 @@ class BoidsEstimator:
                 "coefficients": "dimensionless gain; fitted against acceleration-like vectors in m/s^2",
                 "influence_vectors": "m/s^2",
                 "rmse": "m/s^2",
+                "normalised_indicators": "dimensionless descriptive indicators on a 0..1 scale; not fitted gains or percentages",
             },
             "active_features": active_features,
             "coefficients": coefficients,
@@ -493,8 +666,18 @@ class BoidsEstimator:
                 "name": "bounded_rolling_boids_ridge",
                 "vector_version": "boids-v1",
                 "configuration": self.config.__dict__.copy(),
-                "boundary_revision": self.boundary_revision,
             },
             "per_track": per_track,
+            "outliers": outliers,
+            "outlier_analysis": {
+                "description": "Candidate movement differences for inspection; not a lameness diagnosis.",
+                "normalised_indicator_definitions": {
+                    "cohesion": "1 - local-centroid-distance / neighbour radius, clipped to 0..1",
+                    "alignment": "mean velocity cosine similarity mapped from -1..1 to 0..1; low-speed headings omitted",
+                    "separation": "1 - nearest-neighbour-distance / separation radius, clipped to 0..1",
+                },
+                **outlier_summary,
+            },
+            "flock_indicators_01": flock_indicators,
             "vectors": vectors,
         }

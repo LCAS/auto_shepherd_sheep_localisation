@@ -75,6 +75,24 @@ Open browser to: `http://localhost:8080`
 ### Video Feed
 Bottom panel displays live annotated detection feed with bounding boxes and labels.
 
+### YOLO inference size
+The Replay controls on both `/` and `/analysis` expose the detector inference
+size. Choose 640 for the default/fastest run, 960 for the first accuracy test,
+or 1280 for a slower high-resolution test. The setting is sent to
+`detect_sheep.py` at runtime through `/drone/select_inference_size` and is
+applied by Ultralytics as `imgsz`. The original frame is still passed to the
+detector; this setting changes the internal resize canvas rather than cropping
+the frame. Tiling is not enabled yet because tile detections must be merged
+before tracking and GPS projection.
+
+The same control includes **2×2 tiled (experimental)** mode. It creates four
+letterboxed 640-pixel tiles, runs one 1280-canvas inference, and maps the
+resulting boxes back to the source frame. This can improve small-sheep recall,
+but requires more GPU memory and may cause an ID change at tile boundaries.
+The Replay/analysis pages also display live NVIDIA GPU load, memory, and
+temperature through NVML when `nvidia-ml-py` and the NVIDIA container runtime
+are available.
+
 ## Node Configuration
 
 ### Trail History Length
@@ -120,18 +138,18 @@ ros2 run auto_shepherd_sheep_localisation_ros2 map_visualiser_node.py
 The package includes a separate `boids_analysis_node.py`. It consumes the
 timestamped visible-track snapshots on `/sheep_paths`, converts GPS to a fixed
 local east/north metric frame, maintains bounded causal motion histories, and
-publishes versioned JSON results on `/sheep/boids_analysis`. It fits
-non-negative rolling gains for cohesion, alignment, separation, and (when a
-field boundary is available) boundary avoidance. Coefficients are model gains,
-not percentages; the feature vectors and fitted acceleration target are in
-`m/s^2`.
+publishes versioned JSON results on `/sheep/boids_analysis`. The current MVP
+fits non-negative rolling gains for cohesion, alignment, and separation only.
+Coefficients are model gains, not percentages; the feature vectors and fitted
+acceleration target are in `m/s^2`.
 
 The injected tmule launch starts the visualiser, analysis node, detector, and
 replay loader. RViz is intentionally not part of this launch:
 
 ```bash
 cd /home/carrot/code/auto_shepherd/auto_shepherd_sheep_localisation/docker
-docker compose run --rm auto_shepherd_sheep_localisation_ros2_humble bash
+docker compose up -d --build --force-recreate auto_shepherd_sheep_localisation_ros2_humble
+docker compose exec --user ros auto_shepherd_sheep_localisation_ros2_humble bash
 
 cd /home/ros/base_ws/src/auto_shepherd_sheep_localisation_ros2/tmule
 tmule -c injected.tmule.yaml launch
@@ -149,18 +167,51 @@ sample subfolders. Files are listed only when the MP4 has a matching SRT with
 the same filename stem. Selecting a replay restarts the loader, detector
 tracking, dashboard trails, and Boids segment from frame one.
 
+The same replay controls include a **Sheep detection model** dropdown populated
+from `detection_process/models/samples/sample_model`. The model marked **tmule
+default** is the model configured by `injected.tmule.yaml`. Selecting another
+model and starting a replay reloads the detector before processing that run.
+
 The video timeline includes **Pause/Play** and **Reset tracking** controls.
 Reset tracking restarts the selected replay at frame one and clears tracker
 IDs, sheep trails, Boids history, and map overlay vectors.
 
 Click a detected sheep marker to select it. When sufficient independent history
-exists, the analysis panel will show that track's estimate; the optional **Boids vectors** overlay draws
-the current cohesion, alignment, separation, and boundary vectors for every
-currently visible detected sheep. The selected sheep still controls the
-per-track estimate shown in the analysis panel. Blue, green, red, and purple
-arrows represent cohesion, alignment, separation, and boundary influence
-respectively. Arrow lengths are display-scaled (8 metres per `m/s^2`) and are
-not calibrated force magnitudes.
+exists, the analysis panel will show that track's estimate; the optional **Boids
+vectors** overlay draws the current cohesion, alignment, and separation vectors
+for every currently visible detected sheep. The selected sheep still controls
+the per-track estimate shown in the analysis panel. Blue, green, and red arrows
+represent cohesion, alignment, and separation respectively. Arrow lengths are
+display-scaled (8 metres per `m/s^2`) and are not calibrated force magnitudes.
+
+Detections are labelled **Observation N** in the dashboard. This is a temporary
+video-track reference, not a verified animal identity; it can change after
+tracking loss, reacquisition, or replay reset. Current movement-screening
+candidates are highlighted with orange boxes and labels in the annotated video;
+other detections remain green.
+
+The live farmer view is available at `/`; the research view is available at
+`/analysis`. The research view filters stored results by source, session, field,
+and replay segment and shows Plotly charts for fitted parameters and data
+quality. Use `/boids/export.csv` to create reproducible paper figures with
+`scripts/generate_boids_figures.py`.
+
+### Session and bad-data removal
+
+Replay runs are stored independently using a session ID prefixed with the video
+filename and containing the replay plus a unique run ID. With looping enabled,
+the loader resets tracking and starts a fresh session at every loop boundary;
+analysis continues, but observations from different passes are not mixed. On
+`/analysis`, select a session and click **Delete selected session data**.
+Deletion requires browser confirmation and typing `DELETE`; it removes the
+stored Boids result rows and prevents late messages from that session being
+saved again. It does not remove the source MP4/SRT files. Start the recording
+again to analyse it as a fresh session.
+
+The **Reset tracking** control has the same session-boundary behaviour: it
+clears the live trails and graphs, restarts the current recording, and stores
+the restarted pass under a new run/session ID. The previous pass remains
+available in research history until explicitly deleted.
 
 For a detector-free seeded smoke demonstration, run the visualiser and
 analysis node as above, then in another container shell run:

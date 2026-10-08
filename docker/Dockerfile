@@ -102,6 +102,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade \
     "numpy>=1.22,<1.25" \
     "scipy==1.12.*" \
     tmule==1.5.9 \
+    nvidia-ml-py \
     pyserial \
     ultralytics \
     flask \

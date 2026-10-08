@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sheep Radar - Movement Analysis</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+        :root { font-family: "Segoe UI", sans-serif; color: #243447; background: #f4f6f8; }
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        .page { max-width: 1500px; margin: 0 auto; padding: 24px; }
+        header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 18px; }
+        h1 { margin: 0; font-size: 24px; }
+        h2 { margin: 0 0 12px; font-size: 17px; }
+        p { line-height: 1.45; }
+        a { color: #2563eb; }
+        .back-link { white-space: nowrap; }
+        .panel { background: #fff; border: 1px solid #dfe5eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(15, 23, 42, .04); }
+        .notice { border-left: 4px solid #2563eb; background: #eff6ff; }
+        .video-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+        .video-toolbar .filter { min-width: min(240px, 100%); }
+        .video-toolbar .filter select { width: 100%; min-width: 0; padding: 9px 12px; line-height: 1.35; }
+        .video-toolbar .filter select option { padding: 8px 12px; line-height: 1.35; }
+        .gpu-status { margin-top: 10px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; color: #475467; font-size: 12px; }
+        .gpu-device { display: grid; gap: 2px; }
+        .gpu-device strong { color: #1d4ed8; }
+        .inference-guide { margin-top: 16px; }
+        .inference-guide h2 { margin-bottom: 6px; }
+        .inference-guide-intro, .inference-guide-note { color: #667085; font-size: 12px; line-height: 1.45; }
+        .inference-guide-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .inference-guide-table th, .inference-guide-table td { padding: 9px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid #e5e7eb; }
+        .inference-guide-table th { color: #475467; font-size: 11px; }
+        .inference-guide-table td:first-child { color: #243447; font-weight: 700; white-space: nowrap; }
+        .inference-guide-note { margin: 12px 0 0; }
+        .video-frame { width: 100%; min-height: 280px; max-height: 620px; object-fit: contain; background: #050505; border-radius: 6px; margin-top: 14px; }
+        .video-status { display: flex; justify-content: space-between; gap: 12px; color: #667085; font-size: 12px; margin-top: 8px; }
+        .video-progress { height: 6px; background: #cbd5e1; border-radius: 4px; overflow: hidden; margin-top: 8px; }
+        .video-progress-fill { width: 0; height: 100%; background: #2563eb; transition: width .15s linear; }
+        .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+        .filter { display: flex; flex-direction: column; gap: 5px; min-width: 170px; flex: 1 1 180px; }
+        label { font-size: 12px; font-weight: 700; color: #475467; }
+        select, button { min-height: 36px; border: 1px solid #cbd5e1; border-radius: 5px; padding: 7px 9px; background: #fff; color: #243447; }
+        button { cursor: pointer; background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 700; }
+        button:hover { background: #1d4ed8; }
+        .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+        .metric { border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; min-width: 0; }
+        .metric-label { display: block; color: #667085; font-size: 12px; }
+        .metric-value { display: block; margin-top: 5px; font-size: 20px; font-family: monospace; font-weight: 700; overflow-wrap: anywhere; }
+        .outlier-list { display: grid; gap: 8px; }
+        .outlier-item { border-left: 4px solid #f97316; background: #fff7ed; padding: 9px 11px; border-radius: 4px; }
+        .outlier-item strong { color: #9a3412; }
+        .outlier-item.historical { border-left-color: #cbd5e1; background: #f8fafc; color: #667085; }
+        .outlier-item.historical strong { color: #667085; }
+        .outlier-state { float: right; font-size: 11px; font-weight: 700; }
+        .outlier-item.live .outlier-state { color: #c2410c; }
+        .outlier-item.historical .outlier-state { color: #98a2b3; }
+        .status { color: #d97706; }
+        .status.ok { color: #15803d; }
+        .status.error { color: #b91c1c; }
+        .charts { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; }
+        .chart { width: 100%; height: 360px; }
+        .chart-description { margin: -5px 0 8px; color: #667085; font-size: 12px; line-height: 1.4; }
+        .empty { min-height: 160px; display: grid; place-items: center; color: #667085; text-align: center; }
+        .technical { max-height: 280px; overflow: auto; background: #f8fafc; padding: 12px; border-radius: 5px; font-size: 11px; }
+        .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+        .danger-button { background: #b91c1c; border-color: #b91c1c; }
+        .danger-button:hover { background: #991b1b; }
+        .danger-button:disabled { background: #cbd5e1; border-color: #cbd5e1; cursor: not-allowed; }
+        .small { color: #667085; font-size: 12px; }
+        .definition-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .definition-table th, .definition-table td { text-align: left; vertical-align: top; padding: 9px 8px; border-bottom: 1px solid #e5e7eb; }
+        .definition-table th { color: #475467; font-size: 12px; }
+        @media (max-width: 850px) {
+            .page { padding: 12px; }
+            header { align-items: flex-start; flex-direction: column; }
+            .summary, .charts { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 560px) {
+            .summary, .charts { grid-template-columns: 1fr; }
+            .chart { height: 300px; }
+        }
+    </style>
+</head>
+<body>
+<main class="page">
+    <header>
+        <div>
+            <h1>📊 Sheep Radar movement analysis</h1>
+            <p class="small">Research view for exploratory cohesion, alignment, and separation estimates.</p>
+        </div>
+        <a class="back-link" href="/">← Back to live map</a>
+    </header>
+
+    <section class="panel notice">
+        <strong>Interpretation boundary</strong>
+        <p>This page reports fitted movement-model parameters, not validated health, welfare, stress, or abnormal-behaviour scores. Values are comparable only when the source, coordinate frame, vector definition, and model configuration match.</p>
+    </section>
+
+    <section class="panel">
+        <h2>Replay</h2>
+        <div class="video-toolbar">
+            <div class="filter"><label for="replaySelect">Recording</label><select id="replaySelect"><option value="">Loading recordings…</option></select></div>
+            <div class="filter"><label for="modelSelect">Sheep detection model</label><select id="modelSelect"><option value="">Loading models…</option></select></div>
+            <div class="filter"><label for="inferenceSize">YOLO inference size</label><select id="inferenceSize" onchange="selectInferenceSize(this.value)"><option value="">Loading sizes…</option></select></div>
+            <div class="filter"><label for="inferenceMode">YOLO inference mode</label><select id="inferenceMode" onchange="selectInferenceMode(this.value)"><option value="">Loading modes…</option></select></div>
+            <button type="button" onclick="startSelectedReplay()">▶ Start selected video</button>
+            <button type="button" onclick="sendReplayControl('pause')">Pause</button>
+            <button type="button" onclick="sendReplayControl('play')">Play</button>
+            <button type="button" onclick="sendReplayControl('reset')">Reset tracking</button>
+            <label><input type="checkbox" id="replayLoop" onchange="toggleReplayLoop(this.checked)"> Loop video</label>
+        </div>
+        <div id="replayStatus" class="video-status"><span>Waiting for replay status</span><span>--</span></div>
+        <div class="video-progress"><div id="replayProgress" class="video-progress-fill"></div></div>
+        <div id="gpuInfo" class="gpu-status">Waiting for GPU telemetry…</div>
+        <img id="analysisVideo" class="video-frame" src="/video_feed" alt="Annotated sheep detection video">
+        <p class="small"><strong style="color:#f97316;">Orange box/text</strong> marks a current movement-screening candidate in the annotated feed. Green marks other detections. Observation references are temporary video-track references, not verified animal identities.</p>
+    </section>
+
+    <section class="panel">
+        <h2>Filter results</h2>
+        <div class="filters">
+            <div class="filter"><label for="sourceFilter">Source</label><select id="sourceFilter"><option value="">All sources</option></select></div>
+            <div class="filter"><label for="sessionFilter">Session</label><select id="sessionFilter"><option value="">All sessions</option></select></div>
+            <div class="filter"><label for="fieldFilter">Field</label><select id="fieldFilter"><option value="">All fields</option></select></div>
+            <div class="filter"><label for="segmentFilter">Segment</label><select id="segmentFilter"><option value="">All segments</option></select></div>
+            <button type="button" onclick="applyFilters()">Apply filters</button>
+            <button id="deleteSessionButton" class="danger-button" type="button" onclick="deleteSelectedSession()" disabled>Delete selected session data</button>
+        </div>
+        <p id="sessionMessage" class="small"></p>
+    </section>
+
+    <section class="panel">
+        <div class="summary">
+            <div class="metric"><span class="metric-label">Latest status</span><span id="latestStatus" class="metric-value status">No data</span></div>
+            <div class="metric"><span class="metric-label">Observed sheep</span><span id="latestTracks" class="metric-value">--</span></div>
+            <div class="metric"><span class="metric-label">Window duration</span><span id="latestWindow" class="metric-value">--</span></div>
+            <div class="metric"><span class="metric-label">Acceleration RMSE</span><span id="latestRmse" class="metric-value">--</span></div>
+            <div class="metric"><span class="metric-label">Candidate outliers</span><span id="latestOutliers" class="metric-value">--</span></div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Latest observed flock indicators (0–1)</h2>
+        <div class="summary">
+            <div class="metric"><span class="metric-label">Cohesion</span><span id="latestIndicatorCohesion" class="metric-value">--</span></div>
+            <div class="metric"><span class="metric-label">Alignment</span><span id="latestIndicatorAlignment" class="metric-value">--</span></div>
+            <div class="metric"><span class="metric-label">Separation</span><span id="latestIndicatorSeparation" class="metric-value">--</span></div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Movement screening candidates</h2>
+        <p class="small">These are persistent relative movement differences within the observed flock, not a lameness diagnosis. Live candidates are orange; previous candidates remain in the list in grey so they are not lost when the latest update no longer flags them. Inspect the animal and video context before acting.</p>
+        <div id="outlierList" class="outlier-list"><div class="empty">Collecting comparable movement data.</div></div>
+    </section>
+
+    <section class="charts">
+        <div class="panel"><h2>Rolling Boids parameters</h2><p class="chart-description">Estimated model gains over the selected session; these are fitted coefficients, not percentages or welfare scores.</p><div id="coefficientChart" class="chart"></div></div>
+        <div class="panel"><h2>Data quality over time</h2><p class="chart-description">Shows how many sheep contributed to each result and the acceleration prediction error used to judge fit quality.</p><div id="qualityChart" class="chart"></div></div>
+        <div class="panel"><h2>Normalised movement indicators</h2><p class="chart-description">Shows the observed flock’s descriptive 0–1 summaries for staying together, moving in the same direction, and avoiding close neighbours.</p><div id="normalisedChart" class="chart"></div></div>
+    </section>
+
+    <section class="panel">
+        <div class="actions">
+            <a id="csvLink" href="/boids/export.csv?limit=2000">Download filtered CSV</a>
+            <a id="trackCsvLink" href="/boids/export_tracks.csv?limit=2000">Download per-sheep CSV</a>
+            <a id="bundleLink" href="/boids/export.zip?limit=2000">Download CSV bundle</a>
+            <span id="resultSummary" class="small">No recent observations.</span>
+        </div>
+    </section>
+
+    <details class="panel">
+        <summary>Latest technical result</summary>
+        <pre id="technical" class="technical">No result loaded.</pre>
+    </details>   
+
+    <section class="panel">
+        <h2>The three parameters</h2>
+        <p class="small">The fitted gains are retained for research. The 0–1 indicators below are easier-to-read summaries calculated using fixed interaction distances; they are not percentages or health scores.</p>
+        <table class="definition-table">
+            <thead><tr><th>Parameter</th><th>What it measures</th><th>Low value (0)</th><th>High value (1)</th></tr></thead>
+            <tbody>
+                <tr><th>Cohesion</th><td>How strongly a sheep stays with or moves towards its local group</td><td>Isolated or moving away</td><td>Staying close or moving towards the flock</td></tr>
+                <tr><th>Alignment</th><td>How closely a sheep matches its neighbours’ movement direction</td><td>Moving in a different direction</td><td>Moving in the same direction</td></tr>
+                <tr><th>Separation</th><td>How strongly a sheep avoids getting too close to others</td><td>Little avoidance response</td><td>Strong avoidance response</td></tr>
+            </tbody>
+        </table>
+        <h2 style="margin-top:18px;">How to interpret the scales</h2>
+        <p><strong>Cohesion:</strong> high values indicate movement towards or remaining near the local group. Low values can indicate drifting away or isolation.</p>
+        <p><strong>Alignment:</strong> high values mean similar travel directions. Low values indicate a different direction; very slow sheep are treated as having no reliable heading.</p>
+        <p><strong>Separation:</strong> high values indicate a close neighbour and a stronger avoidance influence. Low values usually mean neighbours are sufficiently far away.</p>
+    </section>
+<section class="panel inference-guide">
+    <h2>How inference size and tiling work</h2>
+    <p class="inference-guide-intro">Choose the mode and size from the Replay controls. Larger inputs can help detect small sheep, but increase processing time and GPU memory use.</p>
+    <table class="inference-guide-table">
+        <thead><tr><th>Setting</th><th>What happens</th><th>Best use</th><th>Trade-off</th></tr></thead>
+        <tbody>
+            <tr><td>Full frame · 640</td><td>The complete original frame is resized internally to a 640px inference canvas.</td><td>Fast baseline</td><td>Small sheep may be harder to detect.</td></tr>
+            <tr><td>Full frame · 960 / 1280</td><td>The complete original frame is resized internally to a larger canvas.</td><td>Test improved small-sheep detail</td><td>Slower and uses more GPU memory.</td></tr>
+            <tr><td>2×2 tiled</td><td>The original frame is split into four quadrants. Each becomes a 640×640 tile, then YOLO runs on the combined 1280×1280 image.</td><td>Experimental small-object test</td><td>Highest memory use; IDs may change at tile boundaries.</td></tr>
+        </tbody>
+    </table>
+    <p class="inference-guide-note"><strong>Important:</strong> tiled mode does not first shrink the whole frame to 640. It splits the original frame first, and currently uses a fixed 1280 inference canvas.</p>
+</section>
+
+<section class="panel inference-guide">
+    <h2>How movement screening works</h2>
+    <p class="inference-guide-intro">A screening candidate is an observation whose recent movement differs substantially from the other currently visible tracks. These are exploratory relative thresholds for prioritising inspection, not medical, welfare, or lameness thresholds.</p>
+    <table class="inference-guide-table">
+        <thead><tr><th>Screening rule</th><th>Current setting</th><th>What it means</th></tr></thead>
+        <tbody>
+            <tr><td>Comparison window</td><td>60 seconds</td><td>Speed and stopping statistics use each observation's recent 60 seconds of usable history.</td></tr>
+            <tr><td>Minimum track history</td><td>10 usable speed samples</td><td>An observation is not compared until enough movement samples are available.</td></tr>
+            <tr><td>Minimum flock size</td><td>3 eligible observations</td><td>The screen waits for at least three comparable tracks in the current flock.</td></tr>
+            <tr><td>Unusualness threshold</td><td>3.5 robust z-score</td><td>One or more measures must be unusually different from the observed flock: low speed, frequent stopping, or distance from the flock centre.</td></tr>
+            <tr><td>Stopped speed</td><td>≤ 0.2 m/s</td><td>Speeds at or below this value contribute to the stopping fraction.</td></tr>
+            <tr><td>Persistence</td><td>5 seconds</td><td>The unusual movement must continue before it appears as a current candidate.</td></tr>
+            <tr><td>Tracking gap tolerance</td><td>2 seconds</td><td>A longer gap resets the persistence timer rather than assuming continuous behaviour.</td></tr>
+        </tbody>
+    </table>
+    <p class="inference-guide-note"><strong>Important:</strong> the 3.5 threshold is relative to the observed flock, not a fixed speed or distance in metres. Orange video boxes mark current candidates; grey entries in the list are previous candidates. A candidate is not a diagnosis and should be checked against the video and the animal in person.</p>
+</section>
+</main>
+<script>
+    const socket = io();
+    const colours = {cohesion: '#2563eb', alignment: '#16a34a', separation: '#dc2626'};
+    const labels = {cohesion: 'Cohesion', alignment: 'Alignment', separation: 'Separation'};
+    let history = [];
+    let selectedModelId = '';
+    let activeReplaySessionId = '';
+
+    function formatReplayTime(value) {
+        const seconds = Math.max(0, Math.floor(Number(value) || 0));
+        return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    }
+
+    function formatReplayDuration(value) {
+        const totalSeconds = Math.max(0, Math.round(Number(value) || 0));
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    function updateReplayStatus(replay) {
+        if (!replay) return;
+        const current = Math.max(0, Number(replay.current_time_s) || 0);
+        const duration = Math.max(0, Number(replay.duration_s ?? replay.end_time_s) || 0);
+        const percent = duration ? Math.min(100, current / duration * 100) : 0;
+        const status = replay.state === 'paused' ? 'Paused' : replay.state === 'ended' ? 'Ended' : 'Playing';
+        const model = replay.model_id ? ` · ${replay.model_id}` : '';
+        document.getElementById('replayStatus').innerHTML = `<span>${replay.video_name || 'Replay video'}${model} · ${status}</span><span>${formatReplayTime(current)} / ${formatReplayTime(duration)}</span>`;
+        const loopCheckbox = document.getElementById('replayLoop');
+        if (loopCheckbox && typeof replay.loop_enabled === 'boolean' && !loopCheckbox.matches(':active')) {
+            loopCheckbox.checked = replay.loop_enabled;
+        }
+        if (replay.session_id && replay.session_id !== activeReplaySessionId) {
+            switchToReplaySession(replay.session_id);
+        }
+        document.getElementById('replayProgress').style.width = `${percent}%`;
+    }
+
+    async function loadReplayOptions() {
+        const select = document.getElementById('replaySelect');
+        try {
+            const response = await fetch('/replays');
+            const payload = await response.json();
+            select.innerHTML = '<option value="">Choose a recording…</option>';
+            (payload.replays || []).forEach(replay => {
+                const option = document.createElement('option');
+                option.value = replay.id;
+                option.textContent = `${replay.label} · ${formatReplayDuration(replay.duration_s)}`;
+                select.appendChild(option);
+            });
+        } catch (error) {
+            select.innerHTML = '<option value="">Recordings unavailable</option>';
+        }
+    }
+
+    async function loadModelOptions() {
+        const select = document.getElementById('modelSelect');
+        try {
+            const response = await fetch('/models');
+            const payload = await response.json();
+            const models = Array.isArray(payload.models) ? payload.models : [];
+            select.innerHTML = '';
+            if (!models.length) {
+                select.innerHTML = '<option value="">No detection models found</option>';
+                return;
+            }
+            models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                option.textContent = model.default ? `${model.label} (default)` : model.label;
+                if (model.default) selectedModelId = model.id;
+                select.appendChild(option);
+            });
+            select.value = selectedModelId || models[0].id;
+            selectedModelId = select.value;
+        } catch (error) {
+            select.innerHTML = '<option value="">Could not load model list</option>';
+        }
+    }
+
+    async function loadInferenceSizeOptions() {
+        const select = document.getElementById('inferenceSize');
+        try {
+            const response = await fetch('/inference_sizes');
+            const payload = await response.json();
+            select.innerHTML = '';
+            (payload.sizes || []).forEach(size => {
+                const option = document.createElement('option');
+                option.value = size.value;
+                option.textContent = size.label;
+                select.appendChild(option);
+            });
+            select.value = String(payload.selected || 640);
+            const modeSelect = document.getElementById('inferenceMode');
+            modeSelect.innerHTML = '';
+            (payload.modes || []).forEach(mode => {
+                const option = document.createElement('option');
+                option.value = mode.value;
+                option.textContent = mode.label;
+                modeSelect.appendChild(option);
+            });
+            modeSelect.value = payload.selected_mode || 'full';
+        } catch (error) {
+            select.innerHTML = '<option value="640">640 (default)</option>';
+            document.getElementById('inferenceMode').innerHTML = '<option value="full">Full frame (standard)</option>';
+        }
+    }
+
+    function selectInferenceSize(value) {
+        const size = Number(value);
+        if (!Number.isFinite(size)) return;
+        const mode = document.getElementById('inferenceMode').value || 'full';
+        socket.emit('select_inference_size', {size, mode}, result => {
+            if (!result?.ok) document.getElementById('sessionMessage').textContent = result?.error || 'Could not change inference size';
+        });
+    }
+
+    function selectInferenceMode(mode) {
+        const size = Number(document.getElementById('inferenceSize').value || 640);
+        socket.emit('select_inference_size', {size, mode}, result => {
+            if (!result?.ok) document.getElementById('sessionMessage').textContent = result?.error || 'Could not change inference mode';
+        });
+    }
+
+    function renderGpuStatus(gpu) {
+        const target = document.getElementById('gpuInfo');
+        if (!target || !gpu) return;
+        if (!gpu.available) {
+            target.textContent = `GPU telemetry unavailable${gpu.reason ? `: ${gpu.reason}` : ''}`;
+            return;
+        }
+        target.innerHTML = (gpu.devices || []).map(device => `
+            <div class="gpu-device">
+                <strong>GPU ${device.index}: ${device.name}</strong>
+                <span>Load: ${Number(device.utilisation_percent).toFixed(0)}% · Memory: ${Number(device.memory_used_mib).toFixed(0)} / ${Number(device.memory_total_mib).toFixed(0)} MiB</span>
+                <span>Temperature: ${Number(device.temperature_c).toFixed(0)}°C</span>
+            </div>`).join('');
+    }
+
+    function startSelectedReplay() {
+        const replayId = document.getElementById('replaySelect').value;
+        if (!replayId) return;
+        selectedModelId = document.getElementById('modelSelect').value || selectedModelId;
+        if (!selectedModelId) {
+            document.getElementById('sessionMessage').textContent = 'Choose a detection model first';
+            return;
+        }
+        socket.emit('select_replay', {id: replayId, model_id: selectedModelId}, result => {
+            document.getElementById('sessionMessage').textContent = result?.ok ? `Started ${result.label} with ${result.model_label}` : (result?.error || 'Could not start recording');
+        });
+    }
+
+    function sendReplayControl(command) {
+        socket.emit('replay_control', {command}, result => {
+            if (!result?.ok) document.getElementById('sessionMessage').textContent = result?.error || 'Replay control unavailable';
+        });
+    }
+
+    function toggleReplayLoop(enabled) {
+        socket.emit('replay_control', {command: 'loop', enabled}, result => {
+            if (!result?.ok) document.getElementById('replayLoop').checked = !enabled;
+        });
+    }
+
+        function toggleReplayLoop(enabled) {
+            socket.emit('replay_control', {command: 'loop', enabled}, result => {
+                if (!result?.ok) document.getElementById('replayLoop').checked = !enabled;
+            });
+        }
+
+    socket.on('map_update', data => {
+        updateReplayStatus(data.replay);
+        if (data.inference_size) {
+            const select = document.getElementById('inferenceSize');
+            if (select && document.activeElement !== select) select.value = String(data.inference_size);
+        }
+        if (data.inference_mode) {
+            const modeSelect = document.getElementById('inferenceMode');
+            if (modeSelect && document.activeElement !== modeSelect) modeSelect.value = data.inference_mode;
+        }
+        renderGpuStatus(data.gpu);
+    });
+    socket.on('boids_analysis_update', result => {
+        if (result?.session_id === activeReplaySessionId) refreshActiveReplayHistory();
+    });
+
+    function formatNumber(value, digits = 3) {
+        return value === null || value === undefined || !Number.isFinite(Number(value)) ? '--' : Number(value).toFixed(digits);
+    }
+
+    function sentenceCase(value) {
+        const text = String(value ?? '').replaceAll('_', ' ').trim().toLowerCase();
+        return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+    }
+
+    function fillSelect(id, values, allLabel) {
+        const select = document.getElementById(id);
+        const selected = select.value;
+        select.innerHTML = `<option value="">${allLabel}</option>`;
+        values.filter(Boolean).sort().forEach(value => {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = value;
+            select.appendChild(option);
+        });
+        if (values.includes(selected)) select.value = selected;
+    }
+
+    function populateFilters() {
+        fillSelect('sourceFilter', [...new Set(history.map(item => item.source_type))], 'All sources');
+        fillSelect('sessionFilter', [...new Set(history.map(item => item.session_id))], 'All sessions');
+        fillSelect('fieldFilter', [...new Set(history.map(item => item.field_id))], 'All fields');
+        fillSelect('segmentFilter', [...new Set(history.map(item => item.segment_id))], 'All segments');
+    }
+
+    function ensureSessionOption(sessionId) {
+        if (!sessionId) return;
+        const select = document.getElementById('sessionFilter');
+        if (!Array.from(select.options).some(option => option.value === sessionId)) {
+            const option = document.createElement('option');
+            option.value = sessionId;
+            option.textContent = `${sessionId} (current replay)`;
+            select.appendChild(option);
+        }
+    }
+
+    function switchToReplaySession(sessionId) {
+        activeReplaySessionId = sessionId;
+        ensureSessionOption(sessionId);
+        document.getElementById('sessionFilter').value = sessionId;
+        document.getElementById('fieldFilter').value = '';
+        document.getElementById('segmentFilter').value = '';
+        document.getElementById('sessionMessage').textContent = 'New replay session selected; collecting movement data.';
+        updateDeleteButton();
+        render([]);
+    }
+
+    async function refreshActiveReplayHistory() {
+        if (!activeReplaySessionId) return;
+        try {
+            const query = new URLSearchParams({limit: '2000', session_id: activeReplaySessionId});
+            const response = await fetch(`/boids/history?${query.toString()}`);
+            const payload = await response.json();
+            const values = Array.isArray(payload.history) ? payload.history : [];
+            const showingActiveSession = document.getElementById('sessionFilter').value === activeReplaySessionId;
+            history = history.filter(item => item.session_id !== activeReplaySessionId).concat(values);
+            populateFilters();
+            ensureSessionOption(activeReplaySessionId);
+            if (showingActiveSession) document.getElementById('sessionFilter').value = activeReplaySessionId;
+            render(filteredHistory());
+        } catch (error) {
+            document.getElementById('sessionMessage').textContent = 'The current replay is running; analysis history is still loading.';
+        }
+    }
+
+    function filteredHistory() {
+        const filters = {
+            source_type: document.getElementById('sourceFilter').value,
+            session_id: document.getElementById('sessionFilter').value,
+            field_id: document.getElementById('fieldFilter').value,
+            segment_id: document.getElementById('segmentFilter').value,
+        };
+        return history.filter(item => Object.entries(filters).every(([key, value]) => !value || item[key] === value));
+    }
+
+    function updateDeleteButton() {
+        document.getElementById('deleteSessionButton').disabled = !document.getElementById('sessionFilter').value;
+    }
+
+    function chartTimes(values) {
+        return values.map((item, index) => {
+            const value = Number(item.window_end_s);
+            return Number.isFinite(value) ? value : index;
+        });
+    }
+
+    function chartTimeLabel(value) {
+        const totalSeconds = Math.max(0, Math.floor(Number(value) || 0));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    function renderCharts(values) {
+        const rawTimes = chartTimes(values);
+        const firstTime = rawTimes.length ? rawTimes[0] : 0;
+        const x = rawTimes.map(value => chartTimeLabel(value - firstTime));
+        const traces = Object.keys(labels).map(key => ({
+            x,
+            y: values.map(item => Number.isFinite(Number(item.coefficients?.[key])) ? Number(item.coefficients[key]) : null),
+            name: labels[key],
+            mode: 'lines',
+            connectgaps: false,
+            line: {color: colours[key], width: 2},
+            hovertemplate: `Time: %{x}<br>${labels[key]}: %{y:.3f}<extra></extra>`,
+        }));
+        const baseLayout = {
+            height: 350,
+            margin: {l: 48, r: 16, t: 30, b: 42},
+            paper_bgcolor: 'transparent', plot_bgcolor: '#fff',
+            font: {family: 'Segoe UI, sans-serif', size: 11, color: '#475467'},
+            hovermode: 'x unified', legend: {orientation: 'h', x: 0, y: 1.12},
+            xaxis: {title: 'Time (HH:MM:SS)', gridcolor: '#e5e7eb', type: 'category', nticks: 8, tickangle: -30},
+        };
+        Plotly.react('coefficientChart', values.length ? traces : [], {...baseLayout, yaxis: {title: 'Fitted gain', gridcolor: '#e5e7eb'}}, {displayModeBar: false, responsive: true});
+
+        const qualityTraces = [
+            {x, y: values.map(item => Number(item.quality?.observed_tracks ?? null)), name: 'Observed sheep', mode: 'lines', line: {color: '#0f766e', width: 2}, yaxis: 'y', hovertemplate: 'Time: %{x}<br>Observed sheep: %{y}<extra></extra>'},
+            {x, y: values.map(item => Number.isFinite(Number(item.quality?.acceleration_rmse_m_s2)) ? Number(item.quality.acceleration_rmse_m_s2) : null), name: 'Acceleration RMSE', mode: 'lines', line: {color: '#d97706', width: 2, dash: 'dot'}, yaxis: 'y2', hovertemplate: 'Time: %{x}<br>Acceleration RMSE: %{y:.3f}<extra></extra>'},
+        ];
+        Plotly.react('qualityChart', values.length ? qualityTraces : [], {...baseLayout,
+            yaxis: {title: 'Observed sheep', gridcolor: '#e5e7eb'},
+            yaxis2: {title: 'RMSE (m/s²)', overlaying: 'y', side: 'right', gridcolor: '#fef3c7'},
+        }, {displayModeBar: false, responsive: true});
+
+        const indicatorTraces = Object.keys(labels).map(key => ({
+            x,
+            y: values.map(item => Number.isFinite(Number(item.flock_indicators_01?.[key])) ? Number(item.flock_indicators_01[key]) : null),
+            name: labels[key],
+            mode: 'lines',
+            connectgaps: false,
+            line: {color: colours[key], width: 2},
+            hovertemplate: `Time: %{x}<br>${labels[key]}: %{y:.3f}<extra></extra>`,
+        }));
+        Plotly.react('normalisedChart', values.length ? indicatorTraces : [], {...baseLayout,
+            yaxis: {title: 'Indicator (0–1)', range: [0, 1], gridcolor: '#e5e7eb'},
+        }, {displayModeBar: false, responsive: true});
+    }
+
+    function render(values) {
+        const latest = values.length ? values[values.length - 1] : null;
+        const status = document.getElementById('latestStatus');
+        status.textContent = latest ? sentenceCase(latest.status) : 'No data';
+        status.className = `metric-value status ${latest?.status === 'ok' ? 'ok' : latest?.status === 'error' ? 'error' : ''}`;
+        document.getElementById('latestTracks').textContent = latest ? (latest.quality?.observed_tracks ?? '--') : '--';
+        document.getElementById('latestWindow').textContent = latest ? `${formatNumber(latest.quality?.window_duration_s, 1)} s` : '--';
+        document.getElementById('latestRmse').textContent = latest ? `${formatNumber(latest.quality?.acceleration_rmse_m_s2)} m/s²` : '--';
+        const indicators = latest?.flock_indicators_01 || {};
+        document.getElementById('latestIndicatorCohesion').textContent = formatNumber(indicators.cohesion);
+        document.getElementById('latestIndicatorAlignment').textContent = formatNumber(indicators.alignment);
+        document.getElementById('latestIndicatorSeparation').textContent = formatNumber(indicators.separation);
+        const outlierIds = latest && Array.isArray(latest.outliers) ? latest.outliers : [];
+        document.getElementById('latestOutliers').textContent = latest ? String(outlierIds.length) : '--';
+        const outlierList = document.getElementById('outlierList');
+        const currentKeys = new Set();
+        if (latest?.per_track) {
+            Object.values(latest.per_track).forEach(track => {
+                if (track.movement_outlier?.persistent_flag) currentKeys.add(`${latest.session_id || ''}|${latest.segment_id || ''}|${track.track_id}`);
+            });
+        }
+        const rememberedCandidates = new Map();
+        values.forEach(result => {
+            Object.values(result.per_track || {}).forEach(track => {
+                const item = track.movement_outlier;
+                if (!item?.persistent_flag) return;
+                const key = `${result.session_id || ''}|${result.segment_id || ''}|${track.track_id}`;
+                rememberedCandidates.set(key, {
+                    track,
+                    result,
+                    item,
+                    key,
+                    live: currentKeys.has(key),
+                });
+            });
+        });
+        const candidates = Array.from(rememberedCandidates.values()).sort((a, b) => {
+            if (a.live !== b.live) return a.live ? -1 : 1;
+            return Number(b.item.distance_from_flock_m || 0) - Number(a.item.distance_from_flock_m || 0);
+        });
+        // Match the chart x-axis: display elapsed time from the first result,
+        // rather than the large source-clock timestamp.
+        const chartStartTime = values.length ? chartTimes(values)[0] : 0;
+        outlierList.innerHTML = candidates.length ? candidates.map(candidate => {
+            const {track, item, result, live} = candidate;
+            const lastSeen = Number(result.window_end_s);
+            const lastSeenText = Number.isFinite(lastSeen)
+                ? ` · last seen ${chartTimeLabel(lastSeen - chartStartTime)}`
+                : '';
+            return `<div class="outlier-item ${live ? 'live' : 'historical'}"><span class="outlier-state">${live ? 'LIVE' : 'PREVIOUS'}</span><strong>Observation ${track.track_id}</strong> · ${sentenceCase((item.reason_codes || []).join(', '))}<br>` +
+                `Speed ${formatNumber(item.mean_speed_m_s)} m/s · stopped ${(Number(item.stopping_fraction || 0) * 100).toFixed(0)}% · ` +
+                `${formatNumber(item.distance_from_flock_m, 1)} m from flock centre · persistent ${formatNumber(item.persistence_duration_s, 1)} s${lastSeenText}</div>`;
+        }).join('') : `<div class="empty">${latest?.outlier_analysis?.status === 'unavailable' ? 'Collecting comparable movement data.' : 'No persistent movement differences currently exceed the screening threshold.'}</div>`;
+        document.getElementById('resultSummary').textContent = latest ? `${values.length} results · ${latest.active_features?.join(', ') || 'no active features'}` : 'No recent observations.';
+        document.getElementById('technical').textContent = latest ? JSON.stringify(latest, null, 2) : 'No result loaded.';
+        const query = new URLSearchParams({limit: '2000'});
+        ['source_type', 'session_id', 'field_id', 'segment_id'].forEach(key => {
+            const id = {source_type: 'sourceFilter', session_id: 'sessionFilter', field_id: 'fieldFilter', segment_id: 'segmentFilter'}[key];
+            const value = document.getElementById(id).value;
+            if (value) query.set(key, value);
+        });
+        document.getElementById('csvLink').href = `/boids/export.csv?${query.toString()}`;
+        document.getElementById('trackCsvLink').href = `/boids/export_tracks.csv?${query.toString()}`;
+        document.getElementById('bundleLink').href = `/boids/export.zip?${query.toString()}`;
+        renderCharts(values);
+    }
+
+    function applyFilters() { render(filteredHistory()); }
+
+    async function deleteSelectedSession() {
+        const sessionId = document.getElementById('sessionFilter').value;
+        if (!sessionId) return;
+        if (!window.confirm(`Delete all stored analysis results for ${sessionId}?`)) return;
+        if (window.prompt('Type DELETE to confirm permanent session deletion:') !== 'DELETE') return;
+        const response = await fetch('/boids/session/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({session_id: sessionId, confirm: true}),
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+            document.getElementById('sessionMessage').textContent = payload.error || 'Session deletion failed';
+            return;
+        }
+        history = history.filter(item => item.session_id !== sessionId);
+        populateFilters();
+        updateDeleteButton();
+        render(filteredHistory());
+        document.getElementById('sessionMessage').textContent = `Deleted ${payload.deleted_results} stored result(s). Source video files were not deleted.`;
+    }
+
+    async function loadHistory() {
+        try {
+            const response = await fetch('/boids/history?limit=2000');
+            const payload = await response.json();
+            history = Array.isArray(payload.history) ? payload.history : [];
+            populateFilters();
+            if (activeReplaySessionId) {
+                ensureSessionOption(activeReplaySessionId);
+                document.getElementById('sessionFilter').value = activeReplaySessionId;
+                render(filteredHistory());
+            } else {
+                render(history);
+            }
+        } catch (error) {
+            document.getElementById('resultSummary').textContent = 'History unavailable.';
+        }
+    }
+
+    document.getElementById('sessionFilter').addEventListener('change', updateDeleteButton);
+    loadReplayOptions();
+    loadModelOptions();
+    loadInferenceSizeOptions();
+    loadHistory().then(updateDeleteButton);
+</script>
+</body>
+</html>

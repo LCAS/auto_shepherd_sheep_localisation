@@ -14,7 +14,6 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 from std_msgs.msg import String
 from std_msgs.msg import Empty
 
@@ -57,9 +56,12 @@ class BoidsAnalysisNode(Node):
         self.declare_parameter("maximum_gap_s", 2.0)
         self.declare_parameter("neighbour_radius_m", 15.0)
         self.declare_parameter("separation_radius_m", 5.0)
-        self.declare_parameter("boundary_radius_m", 15.0)
         self.declare_parameter("regularisation", 0.01)
         self.declare_parameter("stale_after_s", 5.0)
+        self.declare_parameter("outlier_min_samples", 10)
+        self.declare_parameter("outlier_z_threshold", 3.5)
+        self.declare_parameter("outlier_persistence_s", 5.0)
+        self.declare_parameter("stopping_speed_threshold_m_s", 0.2)
 
         config = BoidsConfig(
             fit_window_s=float(self.get_parameter("fit_window_s").value),
@@ -70,9 +72,12 @@ class BoidsAnalysisNode(Node):
             maximum_gap_s=float(self.get_parameter("maximum_gap_s").value),
             neighbour_radius_m=float(self.get_parameter("neighbour_radius_m").value),
             separation_radius_m=float(self.get_parameter("separation_radius_m").value),
-            boundary_radius_m=float(self.get_parameter("boundary_radius_m").value),
             regularisation=float(self.get_parameter("regularisation").value),
             stale_after_s=float(self.get_parameter("stale_after_s").value),
+            outlier_min_samples=int(self.get_parameter("outlier_min_samples").value),
+            outlier_z_threshold=float(self.get_parameter("outlier_z_threshold").value),
+            outlier_persistence_s=float(self.get_parameter("outlier_persistence_s").value),
+            stopping_speed_threshold_m_s=float(self.get_parameter("stopping_speed_threshold_m_s").value),
         )
         self.estimator = BoidsEstimator(config)
         self.estimator.configure_identity(
@@ -83,15 +88,11 @@ class BoidsAnalysisNode(Node):
         self.frame = LocalMetricFrame()
         self.last_received_wall_time: Optional[float] = None
         self.last_stale_window: Optional[float] = None
+        self.active_session_id: Optional[str] = None
         self.result_pub = self.create_publisher(String, "/sheep/boids_analysis", 10)
-        boundary_qos = QoSProfile(
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1,
-        )
         self.create_subscription(Path, "/sheep_paths", self._positions_cb, 10)
         self.create_subscription(Empty, "/drone/replay_reset", self._replay_reset_cb, 10)
-        self.create_subscription(Path, "/field/gps_fence/path", self._boundary_cb, boundary_qos)
+        self.create_subscription(String, "/drone/replay_status", self._replay_status_cb, 10)
         self.create_timer(1.0, self._stale_cb)
         self.get_logger().info("Boids analysis node ready on /sheep/boids_analysis")
 
@@ -109,18 +110,6 @@ class BoidsAnalysisNode(Node):
             return None
         return value
 
-    def _boundary_cb(self, msg: Path) -> None:
-        gps_points = [
-            (float(pose.pose.position.x), float(pose.pose.position.y))
-            for pose in msg.poses
-            if math.isfinite(float(pose.pose.position.x)) and math.isfinite(float(pose.pose.position.y))
-        ]
-        self.frame.set_if_missing(gps_points)
-        local_points = [self.frame.to_xy(lat, lon) for lat, lon in gps_points]
-        local_points = [point for point in local_points if point is not None]
-        revision = hashlib.sha1(repr(gps_points).encode("utf-8")).hexdigest()[:12]
-        self.estimator.set_boundary(local_points, revision=revision)
-
     def _replay_reset_cb(self, _msg: Empty) -> None:
         self.estimator.reset_segment("replay_reset")
         self.last_received_wall_time = None
@@ -128,6 +117,26 @@ class BoidsAnalysisNode(Node):
         self.get_logger().info(
             f"Replay reset: started Boids segment {self.estimator.segment_id}"
         )
+
+    def _replay_status_cb(self, msg: String) -> None:
+        try:
+            status = json.loads(msg.data)
+        except (TypeError, ValueError):
+            return
+        session_id = status.get("session_id")
+        if not session_id or session_id == self.active_session_id:
+            return
+        if self.active_session_id is not None and self.estimator.latest_timestamp is not None:
+            self.estimator.reset_segment("replay_session_changed")
+        self.active_session_id = str(session_id)
+        self.estimator.configure_identity(
+            self.active_session_id,
+            str(status.get("field_id") or self.estimator.field_id),
+            str(status.get("source_type") or "replay"),
+            replay_id=str(status.get("replay_id") or "") or None,
+            detector_model_id=str(status.get("model_id") or "") or None,
+        )
+        self.get_logger().info(f"Boids session selected: {self.active_session_id}")
 
     def _positions_cb(self, msg: Path) -> None:
         gps_points = [

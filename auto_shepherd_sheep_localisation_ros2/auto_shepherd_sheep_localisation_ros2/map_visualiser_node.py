@@ -12,10 +12,18 @@ from cv_bridge import CvBridge
 import cv2
 import math
 import json
+import re
+import time
+
+try:
+    import pynvml
+except ImportError:
+    pynvml = None
 
 import threading
+import os
 from pathlib import Path as FilePath
-from flask import Flask, render_template, Response, send_from_directory
+from flask import Flask, render_template, Response, send_from_directory, request
 from flask_socketio import SocketIO
 from auto_shepherd_sheep_localisation_ros2.utils.geo_converter import MapConverter
 from auto_shepherd_sheep_localisation_ros2.boids_storage import BoidsStorage
@@ -201,8 +209,8 @@ class MapVisualiser(Node):
             result = json.loads(msg.data)
             if not isinstance(result, dict) or result.get("schema_version") != 1:
                 raise ValueError("unsupported Boids result schema")
-            if self.boids_storage is not None:
-                self.boids_storage.save(result)
+            if self.boids_storage is not None and not self.boids_storage.save(result):
+                return
             with self.lock:
                 self.boids_analysis = result
                 self.boids_history.append(result)
@@ -357,6 +365,7 @@ class MapVisualiser(Node):
     def _send_update(self):
         """Send current state to all connected web clients"""
         try:
+            gpu_status = self._read_gpu_status()
             with self.lock:
                 data = {
                     "drone": self.drone_gps,
@@ -371,10 +380,61 @@ class MapVisualiser(Node):
                     "boids_analysis": self.boids_analysis,
                     "replay": self.replay_status,
                     "replay_reset_serial": self.replay_reset_serial,
+                    "inference_size": self.inference_size,
+                    "inference_mode": self.inference_mode,
+                    "gpu": gpu_status,
                 }
             self.socketio.emit("map_update", data, to=None)
         except Exception as e:
             self.get_logger().warn(f"Failed to send update: {e}")
+
+    def _read_gpu_status(self):
+        """Read NVIDIA telemetry through NVML at most once per second."""
+        now = time.monotonic()
+        if now - self._gpu_status_read_at < 1.0:
+            return self._gpu_status_cache
+        self._gpu_status_read_at = now
+
+        if pynvml is None:
+            self._gpu_status_cache = {
+                "available": False,
+                "reason": "nvidia-ml-py is not installed",
+            }
+            return self._gpu_status_cache
+
+        try:
+            if not self._nvml_initialized:
+                pynvml.nvmlInit()
+                self._nvml_initialized = True
+
+            devices = []
+            for index in range(pynvml.nvmlDeviceGetCount()):
+                handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+                name = pynvml.nvmlDeviceGetName(handle)
+                if isinstance(name, bytes):
+                    name = name.decode("utf-8", errors="replace")
+                utilisation = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                devices.append({
+                    "index": str(index),
+                    "name": name,
+                    "utilisation_percent": float(utilisation.gpu),
+                    "memory_used_mib": float(memory.used) / (1024 * 1024),
+                    "memory_total_mib": float(memory.total) / (1024 * 1024),
+                    "temperature_c": float(
+                        pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                    ),
+                })
+            self._gpu_status_cache = {
+                "available": bool(devices),
+                "devices": devices,
+                "timestamp": time.time(),
+            }
+        except Exception as exc:
+            if isinstance(exc, getattr(pynvml, "NVMLError", ())):
+                self._nvml_initialized = False
+            self._gpu_status_cache = {"available": False, "reason": str(exc)}
+        return self._gpu_status_cache
 
     def _publish_boundary(self, coords):
         """Publish field boundary as Path message on /field/gps_fence/path"""
@@ -418,9 +478,59 @@ class MapVisualiser(Node):
                 choices.append({
                     "id": relative_video,
                     "label": relative_video,
+                    "duration_s": self._replay_duration_seconds(video_path, srt_path),
                     "video_path": str(video_path),
                     "srt_path": str(srt_path),
                 })
+        return choices
+
+    @staticmethod
+    def _replay_duration_seconds(video_path, srt_path):
+        """Estimate replay length using video frames and SRT timing."""
+        duration_s = 0.0
+        capture = cv2.VideoCapture(str(video_path))
+        try:
+            fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+            frames = float(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
+            if fps > 0.0 and frames > 0.0:
+                duration_s = frames / fps
+        finally:
+            capture.release()
+
+        try:
+            text = FilePath(srt_path).read_text(errors="ignore")
+            times = re.findall(
+                r"(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})",
+                text,
+            )
+            if times:
+                def seconds(value):
+                    hours, minutes, rest = value.replace(",", ".").split(":")
+                    return int(hours) * 3600 + int(minutes) * 60 + float(rest)
+                duration_s = max(duration_s, seconds(times[-1][1]) - seconds(times[0][0]))
+        except (OSError, ValueError):
+            pass
+        return round(max(0.0, duration_s), 3)
+
+    @staticmethod
+    def _discover_models(package_dir):
+        """Return safe model choices from the packaged sample-model directory."""
+        model_dir = FilePath(package_dir) / "detection_process" / "models" / "samples" / "sample_model"
+        configured_name = FilePath(os.environ.get("YOLO_WEIGHTS", "")).name
+        default_name = configured_name or "Aerial-Auth-Asfenah-DeepBack-PrabsUoL3-9.pt"
+        choices = []
+        model_paths = sorted(model_dir.iterdir()) if model_dir.is_dir() else []
+        for model_path in model_paths:
+            if not model_path.is_file() or model_path.suffix.lower() not in {".pt", ".onnx", ".engine"}:
+                continue
+            model_id = model_path.name
+            choices.append({
+                "id": model_id,
+                "label": model_id,
+                "default": model_id == default_name,
+            })
+        if choices and not any(item["default"] for item in choices):
+            choices[0]["default"] = True
         return choices
 
     def __init__(self):
@@ -443,6 +553,18 @@ class MapVisualiser(Node):
         self.latest_frame = None
         self.replay_status = None
         self.replay_reset_serial = 0
+        try:
+            self.inference_size = int(os.getenv("YOLO_IMGSZ", "640"))
+        except (TypeError, ValueError):
+            self.inference_size = 640
+        if self.inference_size not in {640, 960, 1280}:
+            self.inference_size = 640
+        self.inference_mode = os.getenv("YOLO_TILING", "full").strip().lower()
+        if self.inference_mode not in {"full", "2x2"}:
+            self.inference_mode = "full"
+        self._gpu_status_cache = {"available": False, "reason": "waiting for first reading"}
+        self._gpu_status_read_at = 0.0
+        self._nvml_initialized = False
         self.boids_analysis = None
         self.max_boids_history = 240
         try:
@@ -492,16 +614,18 @@ class MapVisualiser(Node):
         )
         self.boundary_pub = self.create_publisher(Path, "/field/gps_fence/path", boundary_qos)
         self.replay_select_pub = self.create_publisher(String, "/drone/select_replay", 10)
+        self.model_select_pub = self.create_publisher(String, "/drone/select_model", 10)
+        self.inference_size_pub = self.create_publisher(String, "/drone/select_inference_size", 10)
         self.replay_command_pub = self.create_publisher(String, "/drone/replay_command", 10)
 
         # Setup Flask and SocketIO
-        import os
-
         pkg_dir = os.path.dirname(__file__)
         self.replay_catalog = self._discover_replays(pkg_dir)
+        self.model_catalog = self._discover_models(pkg_dir)
         self.get_logger().info(
             f"Discovered {len(self.replay_catalog)} replay(s) with matching MP4/SRT files"
         )
+        self.get_logger().info(f"Discovered {len(self.model_catalog)} detection model(s)")
         self.app = Flask(
             __name__,
             template_folder=os.path.join(pkg_dir, "web_templates"),
@@ -513,6 +637,10 @@ class MapVisualiser(Node):
         @self.app.route("/")
         def index():
             return render_template("map.html")
+
+        @self.app.route("/analysis")
+        def analysis():
+            return render_template("analysis.html")
 
         @self.app.route("/static/<path:filename>")
         def serve_static(filename):
@@ -531,24 +659,137 @@ class MapVisualiser(Node):
             self.replay_catalog = self._discover_replays(pkg_dir)
             return {
                 "replays": [
-                    {"id": item["id"], "label": item["label"]}
+                    {"id": item["id"], "label": item["label"], "duration_s": item["duration_s"]}
                     for item in self.replay_catalog
                 ]
             }
 
+        @self.app.route("/models")
+        def models():
+            self.model_catalog = self._discover_models(pkg_dir)
+            return {"models": self.model_catalog}
+
+        @self.app.route("/inference_sizes")
+        def inference_sizes():
+            return {
+                "sizes": [
+                    {"value": 640, "label": "640 (fastest)"},
+                    {"value": 960, "label": "960 (recommended test)"},
+                    {"value": 1280, "label": "1280 (slowest / may use more memory)"},
+                ],
+                "selected": self.inference_size,
+                "modes": [
+                    {"value": "full", "label": "Full frame (standard)"},
+                    {"value": "2x2", "label": "2×2 tiled (experimental)"},
+                ],
+                "selected_mode": self.inference_mode,
+            }
+
+        def selected_boids_history():
+            try:
+                limit = max(1, min(int(request.args.get("limit", 2000)), 2000))
+            except (TypeError, ValueError):
+                limit = 2000
+            session_id = request.args.get("session_id") or None
+            field_id = request.args.get("field_id") or None
+            segment_id = request.args.get("segment_id") or None
+            source_type = request.args.get("source_type") or None
+            if self.boids_storage:
+                values = self.boids_storage.history(
+                    limit=limit,
+                    session_id=session_id,
+                    field_id=field_id,
+                    segment_id=segment_id,
+                )
+            else:
+                values = list(self.boids_history)
+                values = [
+                    value for value in values
+                    if (not session_id or value.get("session_id") == session_id)
+                    and (not field_id or value.get("field_id") == field_id)
+                    and (not segment_id or value.get("segment_id") == segment_id)
+                ][-limit:]
+            if source_type:
+                values = [value for value in values if value.get("source_type") == source_type]
+            return values
+
         @self.app.route("/boids/history")
         def boids_history():
             try:
-                values = self.boids_storage.history(limit=240) if self.boids_storage else list(self.boids_history)
-                return {"history": values}
+                return {"history": selected_boids_history()}
             except Exception as exc:
                 self.get_logger().warn(f"Boids history request failed: {exc}")
                 return {"history": [], "error": "history_unavailable"}, 503
 
+        @self.app.route("/boids/filters")
+        def boids_filters():
+            try:
+                values = selected_boids_history()
+                return {
+                    "sessions": sorted({value.get("session_id") for value in values if value.get("session_id")}),
+                    "fields": sorted({value.get("field_id") for value in values if value.get("field_id")}),
+                    "segments": sorted({value.get("segment_id") for value in values if value.get("segment_id")}),
+                    "source_types": sorted({value.get("source_type") for value in values if value.get("source_type")}),
+                }
+            except Exception as exc:
+                self.get_logger().warn(f"Boids filter request failed: {exc}")
+                return {"sessions": [], "fields": [], "segments": [], "source_types": []}, 503
+
+        @self.app.route("/boids/sessions")
+        def boids_sessions():
+            """Return session summaries for the research page."""
+            try:
+                summaries = {}
+                for value in selected_boids_history():
+                    session_id = value.get("session_id")
+                    if not session_id:
+                        continue
+                    summary = summaries.setdefault(session_id, {
+                        "session_id": session_id,
+                        "source_type": value.get("source_type"),
+                        "field_id": value.get("field_id"),
+                        "replay_id": value.get("replay_id"),
+                        "result_count": 0,
+                        "last_window_end_s": None,
+                    })
+                    summary["result_count"] += 1
+                    summary["last_window_end_s"] = value.get("window_end_s")
+                return {"sessions": list(summaries.values())}
+            except Exception as exc:
+                self.get_logger().warn(f"Boids session request failed: {exc}")
+                return {"sessions": []}, 503
+
+        @self.app.route("/boids/session/delete", methods=["POST"])
+        def delete_boids_session():
+            """Delete one confirmed session; never delete source video files."""
+            payload = request.get_json(silent=True) or {}
+            session_id = str(payload.get("session_id", "")).strip()
+            if payload.get("confirm") is not True:
+                return {"ok": False, "error": "explicit confirmation required"}, 400
+            if not session_id or len(session_id) > 512:
+                return {"ok": False, "error": "invalid session_id"}, 400
+            try:
+                deleted = self.boids_storage.delete_session(session_id) if self.boids_storage else 0
+                with self.lock:
+                    before = len(self.boids_history)
+                    self.boids_history = [
+                        value for value in self.boids_history
+                        if value.get("session_id") != session_id
+                    ]
+                    deleted += before - len(self.boids_history)
+                    if self.boids_analysis and self.boids_analysis.get("session_id") == session_id:
+                        self.boids_analysis = None
+                self._send_update()
+                self._send_boids_history()
+                return {"ok": True, "session_id": session_id, "deleted_results": deleted}
+            except Exception as exc:
+                self.get_logger().warn(f"Boids session deletion failed: {exc}")
+                return {"ok": False, "error": "session deletion failed"}, 500
+
         @self.app.route("/boids/export.csv")
         def boids_export():
             try:
-                values = self.boids_storage.history(limit=2000) if self.boids_storage else list(self.boids_history)
+                values = selected_boids_history()
                 from flask import Response as FlaskResponse
                 return FlaskResponse(
                     self.boids_storage.export_csv(values) if self.boids_storage else "",
@@ -557,6 +798,42 @@ class MapVisualiser(Node):
                 )
             except Exception as exc:
                 self.get_logger().warn(f"Boids export failed: {exc}")
+                return {"error": "history_unavailable"}, 503
+
+        @self.app.route("/boids/export_tracks.csv")
+        def boids_track_export():
+            try:
+                values = selected_boids_history()
+                from flask import Response as FlaskResponse
+                return FlaskResponse(
+                    self.boids_storage.export_track_csv(values) if self.boids_storage else "",
+                    mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=boids_track_screening.csv"},
+                )
+            except Exception as exc:
+                self.get_logger().warn(f"Per-track Boids export failed: {exc}")
+                return {"error": "history_unavailable"}, 503
+
+        @self.app.route("/boids/export.zip")
+        def boids_bundle_export():
+            try:
+                import io
+                import zipfile
+                values = selected_boids_history()
+                archive = io.BytesIO()
+                with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+                    flock_csv = self.boids_storage.export_csv(values) if self.boids_storage else ""
+                    track_csv = self.boids_storage.export_track_csv(values) if self.boids_storage else ""
+                    bundle.writestr("boids_flock_results.csv", flock_csv)
+                    bundle.writestr("boids_track_screening.csv", track_csv)
+                from flask import Response as FlaskResponse
+                return FlaskResponse(
+                    archive.getvalue(),
+                    mimetype="application/zip",
+                    headers={"Content-Disposition": "attachment; filename=boids_analysis_bundle.zip"},
+                )
+            except Exception as exc:
+                self.get_logger().warn(f"Boids bundle export failed: {exc}")
                 return {"error": "history_unavailable"}, 503
 
         @self.socketio.on("connect")
@@ -588,34 +865,74 @@ class MapVisualiser(Node):
 
         @self.socketio.on("select_replay")
         def handle_select_replay(selection):
-            """Send a validated dashboard replay choice to the data loader."""
+            """Send validated replay and detector-model choices to ROS."""
             self.replay_catalog = self._discover_replays(pkg_dir)
-            replay_id = str(selection.get("id", "")).strip() if isinstance(selection, dict) else ""
+            self.model_catalog = self._discover_models(pkg_dir)
+            selection = selection if isinstance(selection, dict) else {}
+            replay_id = str(selection.get("id", "")).strip()
             replay = next((item for item in self.replay_catalog if item["id"] == replay_id), None)
             if replay is None:
                 return {"ok": False, "error": "Replay is unavailable or has no matching SRT file"}
+            model_id = str(selection.get("model_id", "")).strip()
+            model = next((item for item in self.model_catalog if item["id"] == model_id), None)
+            if model is None:
+                model = next((item for item in self.model_catalog if item.get("default")), None)
+            if model is None:
+                return {"ok": False, "error": "No detection model is available"}
+
+            model_message = String()
+            model_message.data = json.dumps({"model_id": model["id"]})
+            self.model_select_pub.publish(model_message)
 
             message = String()
             message.data = json.dumps({
                 "replay_id": replay["id"],
                 "video_path": replay["video_path"],
                 "srt_path": replay["srt_path"],
+                "model_id": model["id"],
             })
             self.replay_select_pub.publish(message)
-            self.get_logger().info(f"Dashboard selected replay: {replay['label']}")
-            return {"ok": True, "label": replay["label"]}
+            self.get_logger().info(
+                f"Dashboard selected replay: {replay['label']} with model {model['label']}"
+            )
+            return {"ok": True, "label": replay["label"], "model_label": model["label"]}
+
+        @self.socketio.on("select_inference_size")
+        def handle_select_inference_size(selection):
+            """Forward validated size and tiling settings to the detector."""
+            selection = selection if isinstance(selection, dict) else {}
+            try:
+                size = int(selection.get("size", selection.get("imgsz")))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "Inference size must be 640, 960, or 1280"}
+            if size not in {640, 960, 1280}:
+                return {"ok": False, "error": "Inference size must be 640, 960, or 1280"}
+            mode = str(selection.get("mode", selection.get("tiling_mode", self.inference_mode))).strip().lower()
+            if mode not in {"full", "2x2"}:
+                return {"ok": False, "error": "Inference mode must be full or 2x2"}
+            message = String()
+            message.data = json.dumps({"imgsz": size, "mode": mode})
+            self.inference_size_pub.publish(message)
+            self.inference_size = size
+            self.inference_mode = mode
+            self._send_update()
+            self.get_logger().info(f"Dashboard selected YOLO inference settings: size={size}, mode={mode}")
+            return {"ok": True, "size": size, "mode": mode}
 
         @self.socketio.on("replay_control")
         def handle_replay_control(command_payload):
-            """Forward dashboard play, pause, and reset commands to the loader."""
+            """Forward dashboard playback and loop commands to the loader."""
             command = str(command_payload.get("command", "")).lower() if isinstance(command_payload, dict) else ""
-            if command not in {"play", "pause", "reset"}:
+            if command not in {"play", "pause", "reset", "loop"}:
                 return {"ok": False, "error": "Unknown replay command"}
             message = String()
-            message.data = json.dumps({"command": command})
+            payload = {"command": command}
+            if command == "loop":
+                payload["enabled"] = bool(command_payload.get("enabled", False))
+            message.data = json.dumps(payload)
             self.replay_command_pub.publish(message)
-            self.get_logger().info(f"Dashboard replay command: {command}")
-            return {"ok": True, "command": command}
+            self.get_logger().info(f"Dashboard replay command: {command}{'=' + str(payload['enabled']) if command == 'loop' else ''}")
+            return {"ok": True, "command": command, "enabled": payload.get("enabled")}
 
         # Start Flask in background thread
         self.flask_thread = threading.Thread(

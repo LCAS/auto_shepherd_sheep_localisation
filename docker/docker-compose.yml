@@ -9,6 +9,8 @@ services:
     tty: true
     command: /bin/bash # default shell when you attach
     network_mode: host # helps ROS 2 discovery (optional)
+    # Expose the host NVIDIA GPUs and driver utilities to YOLO.
+    gpus: all
 
     privileged: true
     devices:
@@ -32,6 +34,8 @@ services:
       - DISPLAY=:0
       - QT_X11_NO_MITSHM=1
       - SHEEP_RADAR_DB=/home/ros/data/boids.sqlite3
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-    ports:
-      - "8080:8080"
+    # With network_mode: host, port 8080 is already reachable on the host;
+    # Docker port mappings must not be combined with host networking.

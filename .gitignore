@@ -58,3 +58,25 @@ CATKIN_IGNORE
 
 # Runtime Boids persistence
 /data/*.sqlite3
+
+# Reproducible paper figure outputs
+/paper_figures/
+
+# Local YOLO training data: keep the directory structure, not large files
+/auto_shepherd_sheep_localisation_ros2/training/dataset/images/train/*
+/auto_shepherd_sheep_localisation_ros2/training/dataset/images/val/*
+/auto_shepherd_sheep_localisation_ros2/training/dataset/labels/train/*
+/auto_shepherd_sheep_localisation_ros2/training/dataset/labels/val/*
+/auto_shepherd_sheep_localisation_ros2/training/dataset/images/test/*
+/auto_shepherd_sheep_localisation_ros2/training/dataset/labels/test/*
+!/auto_shepherd_sheep_localisation_ros2/training/dataset/images/train/.gitkeep
+!/auto_shepherd_sheep_localisation_ros2/training/dataset/images/val/.gitkeep
+!/auto_shepherd_sheep_localisation_ros2/training/dataset/labels/train/.gitkeep
+!/auto_shepherd_sheep_localisation_ros2/training/dataset/labels/val/.gitkeep
+!/auto_shepherd_sheep_localisation_ros2/training/dataset/images/test/.gitkeep
+!/auto_shepherd_sheep_localisation_ros2/training/dataset/labels/test/.gitkeep
+
+# Original local Roboflow export; use scripts/prepare_yolo_dataset.py instead
+/auto_shepherd_sheep_localisation_ros2/training/SLAMB.v4-08-10-2026-396-images-no-augmentation-no-tile.coco/
+/auto_shepherd_sheep_localisation_ros2/training/south_africa/
+

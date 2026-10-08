@@ -112,6 +112,8 @@
         }
 
         .replay-controls { display: flex; gap: 5px; margin-top: 5px; }
+        .video-screening-key { margin-top: 5px; color: #d1d5db; font-size: 10px; }
+        .video-screening-key .orange-key { color: #fb923c; font-weight: 700; }
         .replay-control-button {
             border: 1px solid #9ca3af;
             border-radius: 3px;
@@ -567,12 +569,26 @@
         .boids-vector-note { color: #667085; font-size: 10px; line-height: 1.35; margin-top: 5px; }
         #boidsChart { width: 100%; height: 190px; margin-top: 12px; background: white; border: 1px solid #e5e7eb; border-radius: 4px; }
         .boids-meta { color: #667085; margin-top: 7px; line-height: 1.4; }
+        .boids-indicator-meta { margin-top: 8px; padding: 7px 8px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 4px; color: #475467; line-height: 1.45; }
+        .boids-indicator-meta strong { color: #344054; }
         .boids-status { display: flex; align-items: center; justify-content: center; min-height: 42px; padding: 10px 8px 12px; margin: 0 0 10px; text-align: center; font-weight: bold; color: #d97706; }
         .boids-status.ok { color: #15803d; }
         .boids-status.error { color: #b91c1c; }
-        .replay-select { width: 100%; padding: 7px; border: 1px solid #cbd5e1; border-radius: 4px; background: white; color: #2c3e50; font-size: 12px; }
-        .replay-picker { padding: 9px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
+        .replay-select { display: block; width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 4px; background: white; color: #2c3e50; font-size: 12px; line-height: 1.35; }
+        .replay-select option { padding: 8px 12px; line-height: 1.35; }
+        .replay-picker { min-width: 0; padding: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
         .replay-picker-label { display: block; color: #344054; font-size: 11px; font-weight: 700; margin-bottom: 5px; }
+        .gpu-info { display: grid; gap: 6px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; color: #475467; font-size: 12px; }
+        .gpu-device { display: grid; gap: 2px; }
+        .gpu-device strong { color: #1d4ed8; }
+        .inference-guide { margin: 12px 16px; padding: 14px 16px; background: #fff; border: 1px solid #dfe5eb; border-radius: 8px; color: #475467; font-size: 11px; line-height: 1.45; }
+        .inference-guide h2 { margin: 0 0 6px; color: #243447; font-size: 15px; }
+        .inference-guide-intro, .inference-guide-note { color: #667085; }
+        .inference-guide-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+        .inference-guide-table th, .inference-guide-table td { padding: 8px 7px; text-align: left; vertical-align: top; border-bottom: 1px solid #e5e7eb; }
+        .inference-guide-table th { color: #475467; font-size: 10px; }
+        .inference-guide-table td:first-child { color: #243447; font-weight: 700; white-space: nowrap; }
+        .inference-guide-note { margin: 10px 0 0; }
         .replay-start-button { width: 100%; margin-top: 7px; padding: 8px; border: 1px solid #2563eb; border-radius: 4px; background: #2563eb; color: white; cursor: pointer; font-size: 12px; font-weight: 700; }
         .replay-start-button:hover { background: #1d4ed8; }
         .replay-start-button:disabled { background: #93c5fd; border-color: #93c5fd; cursor: wait; }
@@ -583,7 +599,9 @@
         .sheep-boids-popup .popup-cohesion { color: #2563eb; }
         .sheep-boids-popup .popup-alignment { color: #15803d; }
         .sheep-boids-popup .popup-separation { color: #dc2626; }
-        .sheep-boids-popup .popup-boundary { color: #9333ea; }
+        .sheep-outlier-popup { margin-top: 6px; padding: 6px; border-radius: 4px; background: #fff7ed; color: #9a3412; line-height: 1.4; }
+        .sheep-outlier-popup strong { color: #c2410c; }
+        .boids-outlier-meta { margin-top: 7px; padding: 7px 8px; border-left: 3px solid #f97316; background: #fff7ed; color: #9a3412; line-height: 1.4; }
     </style>
 </head>
 <body>
@@ -605,6 +623,7 @@
                         <button type="button" class="replay-control-button" id="replayPlayPause" onclick="toggleReplayPlayback()">Pause</button>
                         <button type="button" class="replay-control-button" onclick="resetReplayTracking()">Reset tracking</button>
                     </div>
+                    <div class="video-screening-key"><span class="orange-key">Orange box/text</span> = current movement-screening candidate · green = other detections</div>
                     <div class="replay-progress-track">
                         <div class="replay-progress-fill" id="replayProgressFill"></div>
                     </div>
@@ -638,6 +657,19 @@
                         <select id="replaySelect" class="replay-select" onchange="selectReplay(this.value)">
                             <option value="">Loading MP4/SRT pairs...</option>
                         </select>
+                        <label class="replay-picker-label" for="modelSelect" style="margin-top:8px;">Sheep detection model</label>
+                        <select id="modelSelect" class="replay-select">
+                            <option value="">Loading models...</option>
+                        </select>
+                        <label class="replay-picker-label" for="inferenceSize" style="margin-top:8px;">YOLO inference size</label>
+                        <select id="inferenceSize" class="replay-select" onchange="selectInferenceSize(this.value)">
+                            <option value="">Loading sizes...</option>
+                        </select>
+                        <label class="replay-picker-label" for="inferenceMode" style="margin-top:8px;">YOLO inference mode</label>
+                        <select id="inferenceMode" class="replay-select" onchange="selectInferenceMode(this.value)">
+                            <option value="">Loading modes...</option>
+                        </select>
+                        <label class="toggle-row" style="margin-top:8px;"><input type="checkbox" id="replayLoop" onchange="toggleReplayLoop(this.checked)"> Loop video</label>
                         <button type="button" class="replay-start-button" id="replayStartButton" onclick="startSelectedReplay()">▶ Start selected video</button>
                     </div>
                     <div id="replayStatus" class="replay-status"></div>
@@ -656,6 +688,16 @@
                         <p><span class="label">Lon:</span> <span class="value">--</span></p>
                         <p><span class="label">Alt:</span> <span class="value">--</span></p>
                     </div>
+                </div>
+            </div>
+
+            <div class="section collapsible-section" id="sectionGpu">
+                <button type="button" class="section-toggle" onclick="toggleSection(this)">
+                    <span class="section-title">🖥️ GPU usage</span>
+                    <span class="section-arrow">▼</span>
+                </button>
+                <div class="section-content">
+                    <div id="gpuInfo" class="gpu-info">Waiting for GPU telemetry…</div>
                 </div>
             </div>
             
@@ -722,24 +764,35 @@
                             <div class="boids-card alignment"><span class="label">Alignment</span><span class="value" id="boidsAlignment">--</span></div>
                             <div class="boids-card separation"><span class="label">Separation</span><span class="value" id="boidsSeparation">--</span></div>
                         </div>
+                        <div id="boidsIndicatorMeta" class="boids-indicator-meta"><strong>Observed flock indicators (0–1)</strong><br>Collecting comparable movement data.</div>
+                        <details class="boids-indicator-meta">
+                            <summary>What the scales mean</summary>
+                            <p><strong>Cohesion:</strong> 0 means isolated or moving away; 1 means close to or moving towards the local group.</p>
+                            <p><strong>Alignment:</strong> 0 means a different direction; 1 means the same direction. Very slow sheep have no reliable heading.</p>
+                            <p><strong>Separation:</strong> 0 means neighbours are sufficiently far away; 1 means a close-neighbour avoidance influence.</p>
+                        </details>
+                        <div class="boids-meta"><strong>Rolling Boids parameters</strong><br>Tracks how the fitted cohesion, alignment, and separation gains change through the current replay session.</div>
                         <div class="boids-vector-legend" aria-label="Boids vector colour legend">
                             <div class="boids-vector-legend-title">Map arrow colours</div>
                             <div class="boids-vector-legend-items">
                                 <span class="boids-vector-key"><span class="boids-vector-swatch" style="background:#2563eb"></span>Cohesion</span>
                                 <span class="boids-vector-key"><span class="boids-vector-swatch" style="background:#16a34a"></span>Alignment</span>
                                 <span class="boids-vector-key"><span class="boids-vector-swatch" style="background:#dc2626"></span>Separation</span>
-                                <span class="boids-vector-key"><span class="boids-vector-swatch" style="background:#9333ea"></span>Boundary</span>
                             </div>
                             <div class="boids-vector-note">When enabled, arrows are drawn for every currently visible detected sheep. Arrow length is display-scaled, not a calibrated force magnitude.</div>
                         </div>
                         <div id="boidsChart" aria-label="Boids coefficient history"></div>
                         <div id="boidsMeta" class="boids-meta">No recent observations.</div>
+                        <div id="boidsOutlierMeta" class="boids-outlier-meta">Movement screening candidates will appear after enough comparable tracks are observed.</div>
                         <div class="boids-disclaimer">These are fitted movement-model parameters, not validated health or welfare scores.</div>
                         <details>
                             <summary>Technical details</summary>
                             <pre id="boidsTechnical" style="white-space: pre-wrap; font-size: 10px; margin-top: 6px;"></pre>
                         </details>
                         <a href="/boids/export.csv" style="display:block; margin-top:7px;">Download analysis CSV</a>
+                        <a href="/boids/export_tracks.csv" style="display:block; margin-top:7px;">Download per-sheep screening CSV</a>
+                        <a href="/boids/export.zip" style="display:block; margin-top:7px;">Download CSV bundle</a>
+                        <a href="/analysis" style="display:block; margin-top:7px;">Open research analysis page →</a>
                     </div>
                 </div>
             </div>
@@ -913,6 +966,7 @@
         let lastReplayResetSerial = null;
         let requestedReplayState = null;
         let selectedReplayId = '';
+        let selectedModelId = '';
 
         function setupSidebarResize() {
             const sidebar = document.getElementById('sidebar');
@@ -1121,13 +1175,101 @@
                     const option = document.createElement('option');
                     option.value = replay.id;
                     const source = replay.id.startsWith('videos/') ? 'Local video' : 'Sample video';
-                    option.textContent = `${source} · ${replay.label}`;
+                    option.textContent = `${source} · ${replay.label} · ${formatReplayDuration(replay.duration_s)}`;
                     select.appendChild(option);
                 });
             } catch (error) {
                 select.innerHTML = '<option value="">Could not load replay list</option>';
                 document.getElementById('replayStatus').textContent = 'Replay list unavailable';
             }
+        }
+
+        async function loadModelOptions() {
+            const select = document.getElementById('modelSelect');
+            try {
+                const response = await fetch('/models');
+                const payload = await response.json();
+                const models = Array.isArray(payload.models) ? payload.models : [];
+                select.innerHTML = '';
+                if (!models.length) {
+                    select.innerHTML = '<option value="">No detection models found</option>';
+                    return;
+                }
+                models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.default ? `${model.label} (default)` : model.label;
+                    if (model.default) selectedModelId = model.id;
+                    select.appendChild(option);
+                });
+                select.value = selectedModelId || models[0].id;
+                selectedModelId = select.value;
+            } catch (error) {
+                select.innerHTML = '<option value="">Could not load model list</option>';
+            }
+        }
+
+        async function loadInferenceSizeOptions() {
+            const select = document.getElementById('inferenceSize');
+            try {
+                const response = await fetch('/inference_sizes');
+                const payload = await response.json();
+                select.innerHTML = '';
+                (payload.sizes || []).forEach(size => {
+                    const option = document.createElement('option');
+                    option.value = size.value;
+                    option.textContent = size.label;
+                    select.appendChild(option);
+                });
+                select.value = String(payload.selected || 640);
+                const modeSelect = document.getElementById('inferenceMode');
+                modeSelect.innerHTML = '';
+                (payload.modes || []).forEach(mode => {
+                    const option = document.createElement('option');
+                    option.value = mode.value;
+                    option.textContent = mode.label;
+                    modeSelect.appendChild(option);
+                });
+                modeSelect.value = payload.selected_mode || 'full';
+            } catch (error) {
+                select.innerHTML = '<option value="640">640 (default)</option>';
+                document.getElementById('inferenceMode').innerHTML = '<option value="full">Full frame (standard)</option>';
+            }
+        }
+
+        function selectInferenceSize(value) {
+            const size = Number(value);
+            if (!Number.isFinite(size)) return;
+            const mode = document.getElementById('inferenceMode').value || 'full';
+            socket.emit('select_inference_size', {size, mode}, function(result) {
+                if (!result || !result.ok) {
+                    document.getElementById('replayStatus').textContent = (result && result.error) || 'Could not change inference size';
+                }
+            });
+        }
+
+        function selectInferenceMode(mode) {
+            const size = Number(document.getElementById('inferenceSize').value || 640);
+            socket.emit('select_inference_size', {size, mode}, function(result) {
+                if (!result || !result.ok) {
+                    document.getElementById('replayStatus').textContent = (result && result.error) || 'Could not change inference mode';
+                }
+            });
+        }
+
+        function renderGpuStatus(gpu) {
+            const target = document.getElementById('gpuInfo');
+            if (!target || !gpu) return;
+            if (!gpu.available) {
+                target.textContent = `GPU telemetry unavailable${gpu.reason ? `: ${gpu.reason}` : ''}`;
+                return;
+            }
+            target.innerHTML = (gpu.devices || []).map(device => `
+                <div class="gpu-device">
+                    <strong>GPU ${device.index}: ${device.name}</strong>
+                    <span>Load: ${Number(device.utilisation_percent).toFixed(0)}% · Memory: ${Number(device.memory_used_mib).toFixed(0)} / ${Number(device.memory_total_mib).toFixed(0)} MiB</span>
+                    <span>Temperature: ${Number(device.temperature_c).toFixed(0)}°C</span>
+                </div>`).join('');
         }
 
         function selectReplay(replayId) {
@@ -1141,6 +1283,13 @@
             document.getElementById('replayStatus').textContent = selectedOption ? `Ready: ${selectedOption.textContent}. Press Start selected video.` : 'Recording ready to start';
         }
 
+        function formatReplayDuration(value) {
+            const totalSeconds = Math.max(0, Math.round(Number(value) || 0));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+
         function startSelectedReplay() {
             if (!selectedReplayId) {
                 document.getElementById('replayStatus').textContent = 'Choose a recording first';
@@ -1150,10 +1299,16 @@
             const button = document.getElementById('replayStartButton');
             status.textContent = 'Switching replay…';
             button.disabled = true;
-            socket.emit('select_replay', {id: selectedReplayId}, function(result) {
+            selectedModelId = document.getElementById('modelSelect').value || selectedModelId;
+            if (!selectedModelId) {
+                status.textContent = 'Choose a detection model first';
+                button.disabled = false;
+                return;
+            }
+            socket.emit('select_replay', {id: selectedReplayId, model_id: selectedModelId}, function(result) {
                 button.disabled = false;
                 if (result && result.ok) {
-                    status.textContent = `Playing ${result.label}; resetting detection…`;
+                    status.textContent = `Playing ${result.label} with ${result.model_label}; resetting detection…`;
                 } else {
                     status.textContent = (result && result.error) || 'Could not select replay';
                 }
@@ -1161,6 +1316,8 @@
         }
 
         loadReplayOptions();
+        loadModelOptions();
+        loadInferenceSizeOptions();
 
         socket.on('boids_analysis_update', function(result) {
             boidsLatest = result;
@@ -1206,6 +1363,10 @@
             document.getElementById('replayVideoName').textContent = replay.video_name || 'Replay video';
             document.getElementById('replayPlayingState').textContent = effectiveState === 'paused' ? 'Paused' : (isPlaying ? 'Playing' : 'Ended');
             document.getElementById('replayPlayPause').textContent = isPlaying ? 'Pause' : 'Play';
+            const loopCheckbox = document.getElementById('replayLoop');
+            if (loopCheckbox && typeof replay.loop_enabled === 'boolean' && !loopCheckbox.matches(':active')) {
+                loopCheckbox.checked = replay.loop_enabled;
+            }
             document.getElementById('replayStartTime').textContent = `Start ${formatReplayTime(replay.start_time_s)}`;
             document.getElementById('replayCurrentTime').textContent = `Current ${formatReplayTime(current)}`;
             document.getElementById('replayEndTime').textContent = `End ${formatReplayTime(duration)}`;
@@ -1218,6 +1379,12 @@
                     document.getElementById('replayPlayingState').textContent = (result && result.error) || 'Control unavailable';
                     if (onFailure) onFailure();
                 }
+            });
+        }
+
+        function toggleReplayLoop(enabled) {
+            sendReplayControl('loop', function() {
+                document.getElementById('replayLoop').checked = !enabled;
             });
         }
 
@@ -1251,24 +1418,39 @@
             const result = boidsLatest;
             let coefficients = {};
             let scope = 'No current Boids estimate';
+            let track = null;
             if (result) {
-                const track = result.per_track && result.per_track[String(sheep.id)];
+                track = result.per_track && result.per_track[String(sheep.id)];
                 if (track && track.coefficients) {
                     coefficients = track.coefficients;
-                    scope = 'Per-sheep fitted estimate';
+                    scope = 'Per-observation fitted estimate';
                 } else {
                     coefficients = result.coefficients || {};
                     scope = 'Observed flock estimate';
                 }
             }
-            return `<b>Sheep ${sheep.id}</b><br>` +
+            const outlier = track && track.movement_outlier;
+            const indicators = outlier && outlier.normalised_indicators;
+            const indicatorHtml = indicators
+                ? `<div class="sheep-boids-popup"><div class="popup-title">Movement indicators (0–1)</div>` +
+                  `<div class="popup-cohesion">Cohesion: ${formatBoidsValue(indicators.cohesion)}</div>` +
+                  `<div class="popup-alignment">Alignment: ${formatBoidsValue(indicators.alignment)}</div>` +
+                  `<div class="popup-separation">Separation: ${formatBoidsValue(indicators.separation)}</div></div>` : '';
+            const outlierHtml = outlier && (outlier.candidate_flag || outlier.persistent_flag)
+                ? `<div class="sheep-outlier-popup"><strong>${outlier.persistent_flag ? 'Candidate movement outlier' : 'Movement difference detected'}</strong><br>` +
+                  `${(outlier.reason_codes || []).map(sentenceCase).join(', ') || 'Relative to observed flock'}<br>` +
+                  `Speed ${formatBoidsValue(outlier.mean_speed_m_s)} m/s · ` +
+                  `Stopped ${(Number(outlier.stopping_fraction || 0) * 100).toFixed(0)}% · ` +
+                  `Distance ${formatBoidsValue(outlier.distance_from_flock_m)} m</div>` : '';
+            return `<b>Observation ${sheep.id}</b><br>` +
                 `Lat: ${Number(sheep.latitude).toFixed(6)}<br>` +
                 `Lon: ${Number(sheep.longitude).toFixed(6)}` +
                 `<div class="sheep-boids-popup"><div class="popup-title">Boids parameters · ${scope}</div>` +
                 `<div class="popup-cohesion">Cohesion: ${formatBoidsValue(coefficients.cohesion)}</div>` +
                 `<div class="popup-alignment">Alignment: ${formatBoidsValue(coefficients.alignment)}</div>` +
-                `<div class="popup-separation">Separation: ${formatBoidsValue(coefficients.separation)}</div>` +
-                `<div class="popup-boundary">Boundary: ${formatBoidsValue(coefficients.boundary)}</div></div>`;
+                `<div class="popup-separation">Separation: ${formatBoidsValue(coefficients.separation)}</div></div>` +
+                indicatorHtml +
+                outlierHtml;
         }
 
         function renderBoids() {
@@ -1283,7 +1465,7 @@
             let scope = 'observed flock';
             if (selectedBoidsTrackId && result.per_track && result.per_track[selectedBoidsTrackId]) {
                 coefficients = result.per_track[selectedBoidsTrackId].coefficients || {};
-                scope = `track ${selectedBoidsTrackId}`;
+                scope = `Observation ${selectedBoidsTrackId}`;
             }
             document.getElementById('boidsCohesion').textContent = formatBoidsValue(coefficients.cohesion);
             document.getElementById('boidsAlignment').textContent = formatBoidsValue(coefficients.alignment);
@@ -1296,6 +1478,19 @@
                 `Observed sheep: ${quality.observed_tracks ?? 0} · Samples: ${quality.usable_samples ?? 0} · ` +
                 `Window: ${Number(quality.window_duration_s || 0).toFixed(1)}s · RMSE: ${formatBoidsValue(quality.acceleration_rmse_m_s2)} m/s² · ` +
                 `Reasons: ${reasons}`;
+            const flockIndicators = result.flock_indicators_01 || {};
+            document.getElementById('boidsIndicatorMeta').innerHTML =
+                `<strong>Observed flock indicators (0–1)</strong><br>` +
+                `Cohesion <span class="popup-cohesion">${formatBoidsValue(flockIndicators.cohesion)}</span> · ` +
+                `Alignment <span class="popup-alignment">${formatBoidsValue(flockIndicators.alignment)}</span> · ` +
+                `Separation <span class="popup-separation">${formatBoidsValue(flockIndicators.separation)}</span>`;
+            const outlierIds = Array.isArray(result.outliers) ? result.outliers : [];
+            const outlierSummary = result.outlier_analysis || {};
+            document.getElementById('boidsOutlierMeta').textContent = outlierIds.length
+                ? `Candidate movement outliers: ${outlierIds.map(id => `Observation ${id}`).join(', ')}. Persistent relative differences only; inspect the animal and context before drawing conclusions.`
+                : outlierSummary.status === 'unavailable'
+                    ? 'Movement screening is waiting for at least three comparable tracks with enough history.'
+                    : 'No persistent movement differences currently exceed the screening threshold.';
             document.getElementById('boidsTechnical').textContent = JSON.stringify({
                 active_features: result.active_features,
                 units: result.units,
@@ -1320,8 +1515,8 @@
             const latScale = 1 / 111320.0;
             const lonScale = 1 / (111320.0 * Math.cos(Number(frame.origin_latitude) * Math.PI / 180));
             const displayScale = 8.0; // metres per m/s², display-only scaling
-            const colours = {cohesion: '#2563eb', alignment: '#16a34a', separation: '#dc2626', boundary: '#9333ea'};
-            const labels = {cohesion: 'Cohesion', alignment: 'Alignment', separation: 'Separation', boundary: 'Boundary'};
+            const colours = {cohesion: '#2563eb', alignment: '#16a34a', separation: '#dc2626'};
+            const labels = {cohesion: 'Cohesion', alignment: 'Alignment', separation: 'Separation'};
             lastData.sheep.forEach(sheep => {
                 const trackId = String(sheep.id);
                 const vectors = boidsLatest.vectors[trackId] || boidsLatest.vectors[sheep.id];
@@ -1333,7 +1528,7 @@
                     const endpoint = [sheep.latitude + north * latScale, sheep.longitude + east * lonScale];
                     const line = L.polyline([[sheep.latitude, sheep.longitude], endpoint], {
                         color: colours[name] || '#111827', weight: 3, opacity: 0.8
-                    }).addTo(map).bindTooltip(`${labels[name] || name} · Sheep ${trackId}<br>Display-scaled vector`);
+                    }).addTo(map).bindTooltip(`${labels[name] || name} · Observation ${trackId}<br>Display-scaled vector`);
                     boidsVectorLines.push(line);
                 });
             });
@@ -1357,15 +1552,23 @@
                 {key: 'cohesion', name: 'Cohesion', colour: '#2563eb'},
                 {key: 'alignment', name: 'Alignment', colour: '#16a34a'},
                 {key: 'separation', name: 'Separation', colour: '#dc2626'},
-                {key: 'boundary', name: 'Boundary', colour: '#9333ea'},
             ];
             const xValues = values.map((item, index) => {
                 const candidate = item.window_end_s ?? item.publication_time_s ?? item.window_start_s;
                 return Number.isFinite(Number(candidate)) ? Number(candidate) : index;
             });
+            const chartTime = value => {
+                const totalSeconds = Math.max(0, Math.floor(Number(value) || 0));
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = totalSeconds % 60;
+                return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            };
+            const firstTime = xValues.length ? xValues[0] : 0;
+            const xLabels = xValues.map(value => chartTime(value - firstTime));
             const traces = series.filter(seriesItem => values.some(item => Number.isFinite(Number(item.coefficients[seriesItem.key]))))
                 .map(seriesItem => ({
-                    x: xValues,
+                    x: xLabels,
                     y: values.map(item => {
                         const value = Number(item.coefficients[seriesItem.key]);
                         return Number.isFinite(value) ? value : null;
@@ -1374,7 +1577,7 @@
                     mode: 'lines',
                     connectgaps: false,
                     line: {color: seriesItem.colour, width: 2},
-                    hovertemplate: `${seriesItem.name}: %{y:.3f}<extra></extra>`,
+                    hovertemplate: `Time: %{x}<br>${seriesItem.name}: %{y:.3f}<extra></extra>`,
                 }));
             Plotly.react(chart, traces, {
                 height: 188,
@@ -1385,13 +1588,22 @@
                 hovermode: 'x unified',
                 showlegend: true,
                 legend: {orientation: 'h', x: 0, y: 1.18, font: {size: 10}},
-                xaxis: {title: 'Time (s)', gridcolor: '#e5e7eb', zeroline: false},
+                xaxis: {title: 'Time (HH:MM:SS)', gridcolor: '#e5e7eb', zeroline: false, type: 'category', nticks: 8, tickangle: -30},
                 yaxis: {title: 'Coefficient', gridcolor: '#e5e7eb', zeroline: true, zerolinecolor: '#d1d5db'},
             }, {displayModeBar: false, responsive: true});
         }
         
         socket.on('map_update', function(data) {
             lastData = data;
+            if (data.inference_size) {
+                const inferenceSelect = document.getElementById('inferenceSize');
+                if (inferenceSelect && document.activeElement !== inferenceSelect) inferenceSelect.value = String(data.inference_size);
+            }
+            if (data.inference_mode) {
+                const modeSelect = document.getElementById('inferenceMode');
+                if (modeSelect && document.activeElement !== modeSelect) modeSelect.value = data.inference_mode;
+            }
+            renderGpuStatus(data.gpu);
             updateReplayTime(data.replay);
             if (data.replay_reset_serial !== undefined && data.replay_reset_serial !== lastReplayResetSerial) {
                 if (lastReplayResetSerial !== null) clearSheepTrails();
@@ -1447,12 +1659,19 @@
                     sheepIds.add(sheep.id);
                     const lat = sheep.latitude;
                     const lon = sheep.longitude;
+                    const movementOutlier = boidsLatest && boidsLatest.per_track
+                        ? boidsLatest.per_track[String(sheep.id)]?.movement_outlier
+                        : null;
+                    const markerColour = movementOutlier?.persistent_flag ? '#f97316'
+                        : movementOutlier?.candidate_flag ? '#f59e0b' : '#f39c12';
+                    const markerBorder = movementOutlier?.persistent_flag ? '#c2410c'
+                        : movementOutlier?.candidate_flag ? '#b45309' : '#d68910';
                     
                     if (!sheepMarkers[sheep.id]) {
                         sheepMarkers[sheep.id] = L.circleMarker([lat, lon], {
                             radius: 10,
-                            fillColor: '#f39c12',
-                            color: '#d68910',
+                            fillColor: markerColour,
+                            color: markerBorder,
                             weight: 2,
                             opacity: 1,
                             fillOpacity: 0.8
@@ -1463,6 +1682,7 @@
                         });
                     } else {
                         sheepMarkers[sheep.id].setLatLng([lat, lon]);
+                        sheepMarkers[sheep.id].setStyle({fillColor: markerColour, color: markerBorder});
                         sheepMarkers[sheep.id].setPopupContent(sheepPopupHtml(sheep));
                     }
                 }
@@ -1482,7 +1702,7 @@
                         const sheep = data.sheep.find(s => s.id === id);
                         return `
                             <div class="sheep-item">
-                                <div class="id">Sheep ${sheep.id}</div>
+                                <div class="id">Observation ${sheep.id}</div>
                                 <p><span class="label">Lat:</span> ${sheep.latitude.toFixed(6)}</p>
                                 <p><span class="label">Lon:</span> ${sheep.longitude.toFixed(6)}</p>
                             </div>
@@ -2169,5 +2389,35 @@
             return new L.CanvasOverlay();
         }
     </script>
+    <section class="inference-guide">
+        <h2>How inference size and tiling work</h2>
+        <p class="inference-guide-intro">Choose the mode and size from the Replay controls. Larger inputs can help detect small sheep, but increase processing time and GPU memory use.</p>
+        <table class="inference-guide-table">
+            <thead><tr><th>Setting</th><th>What happens</th><th>Best use</th><th>Trade-off</th></tr></thead>
+            <tbody>
+                <tr><td>Full frame · 640</td><td>The complete original frame is resized internally to a 640px inference canvas.</td><td>Fast baseline</td><td>Small sheep may be harder to detect.</td></tr>
+                <tr><td>Full frame · 960 / 1280</td><td>The complete original frame is resized internally to a larger canvas.</td><td>Test improved small-sheep detail</td><td>Slower and uses more GPU memory.</td></tr>
+                <tr><td>2×2 tiled</td><td>The original frame is split into four quadrants. Each becomes a 640×640 tile, then YOLO runs on the combined 1280×1280 image.</td><td>Experimental small-object test</td><td>Highest memory use; IDs may change at tile boundaries.</td></tr>
+            </tbody>
+        </table>
+        <p class="inference-guide-note"><strong>Important:</strong> tiled mode does not first shrink the whole frame to 640. It splits the original frame first, and currently uses a fixed 1280 inference canvas.</p>
+    </section>
+    <section class="inference-guide">
+        <h2>How movement screening works</h2>
+        <p class="inference-guide-intro">A screening candidate is an observation whose recent movement differs substantially from the other currently visible tracks. These are exploratory relative thresholds for prioritising inspection, not medical, welfare, or lameness thresholds.</p>
+        <table class="inference-guide-table">
+            <thead><tr><th>Screening rule</th><th>Current setting</th><th>What it means</th></tr></thead>
+            <tbody>
+                <tr><td>Comparison window</td><td>60 seconds</td><td>Speed and stopping statistics use each observation's recent 60 seconds of usable history.</td></tr>
+                <tr><td>Minimum track history</td><td>10 usable speed samples</td><td>An observation is not compared until enough movement samples are available.</td></tr>
+                <tr><td>Minimum flock size</td><td>3 eligible observations</td><td>The screen waits for at least three comparable tracks in the current flock.</td></tr>
+                <tr><td>Unusualness threshold</td><td>3.5 robust z-score</td><td>One or more measures must be unusually different from the observed flock: low speed, frequent stopping, or distance from the flock centre.</td></tr>
+                <tr><td>Stopped speed</td><td>≤ 0.2 m/s</td><td>Speeds at or below this value contribute to the stopping fraction.</td></tr>
+                <tr><td>Persistence</td><td>5 seconds</td><td>The unusual movement must continue before it appears as a current candidate.</td></tr>
+                <tr><td>Tracking gap tolerance</td><td>2 seconds</td><td>A longer gap resets the persistence timer rather than assuming continuous behaviour.</td></tr>
+            </tbody>
+        </table>
+        <p class="inference-guide-note"><strong>Important:</strong> the 3.5 threshold is relative to the observed flock, not a fixed speed or distance in metres. Orange video boxes mark current candidates; grey entries in the analysis list are previous candidates. A candidate is not a diagnosis and should be checked against the video and the animal in person.</p>
+    </section>
 </body>
 </html>

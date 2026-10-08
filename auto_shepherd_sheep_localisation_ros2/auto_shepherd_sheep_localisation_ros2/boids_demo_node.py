@@ -8,45 +8,18 @@ import rclpy
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 
 
 class BoidsDemoNode(Node):
     def __init__(self):
         super().__init__("boids_demo")
         self.start = self.get_clock().now().nanoseconds * 1.0e-9
-        self.boundary_pub = self.create_publisher(
-            Path,
-            "/field/gps_fence/path",
-            QoSProfile(
-                durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                history=HistoryPolicy.KEEP_LAST,
-                depth=1,
-            ),
-        )
         self.positions_pub = self.create_publisher(Path, "/sheep_paths", 10)
         self.create_timer(0.1, self._publish)
-        self._publish_boundary()
         self.get_logger().info("Synthetic Boids stream ready (source_type=simulation)")
 
     def _stamp(self):
         return self.get_clock().now().to_msg()
-
-    def _publish_boundary(self):
-        message = Path()
-        message.header.stamp = self._stamp()
-        message.header.frame_id = "field_demo"
-        # Roughly 120 m x 80 m field around the seeded flock.
-        for index, (east, north) in enumerate(
-            [(-60.0, -40.0), (60.0, -40.0), (60.0, 40.0), (-60.0, 40.0)]
-        ):
-            pose = PoseStamped()
-            pose.header.stamp = message.header.stamp
-            pose.header.frame_id = f"boundary_{index}"
-            pose.pose.position.x = 53.2660 + north / 111320.0
-            pose.pose.position.y = -0.5290 + east / (111320.0 * math.cos(math.radians(53.2660)))
-            message.poses.append(pose)
-        self.boundary_pub.publish(message)
 
     def _publish(self):
         now = self.get_clock().now().nanoseconds * 1.0e-9

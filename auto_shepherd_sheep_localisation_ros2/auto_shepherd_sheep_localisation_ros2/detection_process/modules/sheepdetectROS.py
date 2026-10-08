@@ -1,5 +1,6 @@
 from ultralytics import YOLO
 import cv2
+import numpy as np
 
 # import os
 # print("Tracker file exists:", os.path.exists('modules/bytetrack.yaml'))
@@ -28,6 +29,8 @@ class SheepDetectROS:
         max_det=100,
         verbose=False,
         stream=True,
+        imgsz=640,
+        tiling_mode="full",
     ):
         # Load YOLO with pretrained weights
         self.model = YOLO(weights)
@@ -38,6 +41,114 @@ class SheepDetectROS:
         self.verbose = verbose
         self.stream = stream
         self.tracker = tracker
+        self.imgsz = 640
+        self.set_inference_size(imgsz)
+        self.tiling_mode = "full"
+        self.set_tiling_mode(tiling_mode)
+        self.last_inference_warning = None
+
+    def set_inference_size(self, imgsz):
+        """Set the Ultralytics inference canvas size for future frames."""
+        try:
+            value = int(imgsz)
+        except (TypeError, ValueError):
+            raise ValueError("YOLO inference size must be an integer")
+        if value not in {640, 960, 1280}:
+            raise ValueError("YOLO inference size must be one of 640, 960, or 1280")
+        self.imgsz = value
+
+    def set_tiling_mode(self, mode):
+        """Select full-frame inference or the experimental fixed 2x2 mode."""
+        value = str(mode or "full").strip().lower()
+        if value not in {"full", "2x2"}:
+            raise ValueError("Inference mode must be 'full' or '2x2'")
+        self.tiling_mode = value
+
+    @staticmethod
+    def _mapped_box(coordinates):
+        """Provide the small box interface used by detect_sheep.py."""
+        class ArrayTensor:
+            def __init__(self, values):
+                self._values = np.asarray([values], dtype=np.float32)
+
+            def numpy(self):
+                return self._values
+
+        class MappedBox:
+            def __init__(self, values):
+                self.xyxy = ArrayTensor(values)
+
+        return MappedBox(coordinates)
+
+    @staticmethod
+    def _make_2x2_tiles(frame, tile_size=640):
+        """Build a 2x2 640px tile canvas and return inverse transforms.
+
+        Each source quadrant is letterboxed into a 640x640 tile. The resulting
+        1280x1280 canvas is deliberately passed to YOLO at imgsz=1280 so that
+        small objects receive more pixels than full-frame 640 inference.
+        """
+        height, width = frame.shape[:2]
+        canvas = np.zeros((tile_size * 2, tile_size * 2, 3), dtype=frame.dtype)
+        transforms = []
+        for row in range(2):
+            for column in range(2):
+                x0 = (width * column) // 2
+                x1 = (width * (column + 1)) // 2
+                y0 = (height * row) // 2
+                y1 = (height * (row + 1)) // 2
+                crop = frame[y0:y1, x0:x1]
+                crop_height, crop_width = crop.shape[:2]
+                scale = min(tile_size / crop_width, tile_size / crop_height)
+                resized_width = max(1, round(crop_width * scale))
+                resized_height = max(1, round(crop_height * scale))
+                resized = cv2.resize(crop, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+                pad_x = (tile_size - resized_width) // 2
+                pad_y = (tile_size - resized_height) // 2
+                canvas[
+                    row * tile_size + pad_y:row * tile_size + pad_y + resized_height,
+                    column * tile_size + pad_x:column * tile_size + pad_x + resized_width,
+                ] = resized
+                transforms.append((x0, y0, scale, pad_x, pad_y))
+        return canvas, transforms
+
+    def _track(self, frame, imgsz):
+        return self.model.track(
+            frame,
+            conf=self.conf,
+            iou=self.iou,
+            agnostic_nms=self.agnostic_nms,
+            max_det=self.max_det,
+            verbose=self.verbose,
+            stream=self.stream,
+            tracker=self.tracker,
+            persist=True,
+            imgsz=imgsz,
+        )
+
+    def _get_tiled_boxes(self, results, transforms, tile_size=640):
+        boxes = []
+        ids = []
+        for result in results:
+            if result.boxes is None:
+                continue
+            for box in result.boxes:
+                track_id = int(box.id.item()) if box.id is not None else -1
+                coordinates = box.xyxy.detach().cpu().numpy()[0]
+                centre_x = (coordinates[0] + coordinates[2]) / 2.0
+                centre_y = (coordinates[1] + coordinates[3]) / 2.0
+                column = min(1, max(0, int(centre_x // tile_size)))
+                row = min(1, max(0, int(centre_y // tile_size)))
+                x0, y0, scale, pad_x, pad_y = transforms[row * 2 + column]
+                mapped = [
+                    (coordinates[0] - column * tile_size - pad_x) / scale + x0,
+                    (coordinates[1] - row * tile_size - pad_y) / scale + y0,
+                    (coordinates[2] - column * tile_size - pad_x) / scale + x0,
+                    (coordinates[3] - row * tile_size - pad_y) / scale + y0,
+                ]
+                boxes.append(self._mapped_box(mapped))
+                ids.append(track_id)
+        return boxes, ids
 
     def reset_tracker(self):
         """Reset Ultralytics/ByteTrack state without reloading model weights."""
@@ -53,6 +164,10 @@ class SheepDetectROS:
         # active tracks and ID counter.
         if hasattr(predictor, "vid_path"):
             predictor.vid_path = [None]
+
+    def set_model(self, weights):
+        """Load a new detector model for subsequent frames."""
+        self.model = YOLO(weights)
 
     def predict(self, frame, gps, attitude=None, gimbal=None, camera=None):
 
@@ -87,21 +202,25 @@ class SheepDetectROS:
         h, w = frame.shape[:2]
         poses = []
 
-        # Track sheep in this frame
-        results = self.model.track(
-            frame,
-            conf=self.conf,
-            iou=self.iou,
-            agnostic_nms=self.agnostic_nms,
-            max_det=self.max_det,
-            verbose=self.verbose,
-            stream=self.stream,
-            tracker=self.tracker,
-            persist=True,
-        )
-
-        # Extract boxes and tracked IDs
-        boxes, ids = self.getBoxes(results)
+        self.last_inference_warning = None
+        if self.tiling_mode == "2x2":
+            tiled_frame, transforms = self._make_2x2_tiles(frame)
+            try:
+                # Tiled mode uses a fixed 1280 canvas so the four 640px tiles
+                # are not immediately downscaled back to the full-frame size.
+                results = self._track(tiled_frame, imgsz=1280)
+                boxes, ids = self._get_tiled_boxes(results, transforms)
+            except Exception as exc:
+                # Keep the live dashboard alive if the GTX 1060 cannot fit
+                # the experimental tiled model in memory.
+                self.reset_tracker()
+                self.tiling_mode = "full"
+                self.last_inference_warning = f"2x2 tiling failed; fell back to full-frame inference: {exc}"
+                results = self._track(frame, imgsz=self.imgsz)
+                boxes, ids = self.getBoxes(results)
+        else:
+            results = self._track(frame, imgsz=self.imgsz)
+            boxes, ids = self.getBoxes(results)
         for box in boxes:
             x, y = self.centroid(box)
             sheep_lat, sheep_lon = get_gps_from_pixel(

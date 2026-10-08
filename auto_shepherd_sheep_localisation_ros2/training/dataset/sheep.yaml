@@ -1,0 +1,9 @@
+# Ultralytics YOLO dataset configuration.
+# Keep this file beside the images/ and labels/ directories.
+path: .
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: sheep

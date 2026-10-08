@@ -11,6 +11,8 @@ import re
 import time
 import json
 import threading
+import uuid
+import os
 from pathlib import Path
 
 
@@ -60,6 +62,7 @@ class DroneDataPublisher(Node):
         self._wake_playback = threading.Event()
         self._pause_playback = threading.Event()
         self._last_replay_status = None
+        self._finished_replay = False
 
         # Get file paths
         video_path = self.get_parameter("video_path").value
@@ -72,7 +75,10 @@ class DroneDataPublisher(Node):
         self.get_logger().info(f"Video: {video_path}")
         self.get_logger().info(f"SRT: {srt_path}")
 
-        self._requested_replay = (str(video_path), str(srt_path))
+        replay_id = self._replay_id_for_path(video_path)
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        model_id = Path(os.environ.get("YOLO_WEIGHTS", "")).name or None
+        self._requested_replay = (str(video_path), str(srt_path), replay_id, run_id, model_id)
         self.playback_thread = threading.Thread(
             target=self._playback_loop, name="replay-playback", daemon=True
         )
@@ -107,6 +113,8 @@ class DroneDataPublisher(Node):
             selection = json.loads(msg.data)
             video_path = Path(str(selection["video_path"])).resolve()
             srt_path = Path(str(selection["srt_path"])).resolve()
+            replay_id = str(selection.get("replay_id") or self._replay_id_for_path(video_path))
+            model_id = str(selection.get("model_id") or "").strip() or None
         except (ValueError, KeyError, TypeError, OSError) as exc:
             self.get_logger().warning(f"Ignoring invalid replay selection: {exc}")
             return
@@ -121,7 +129,9 @@ class DroneDataPublisher(Node):
             return
 
         with self._replay_lock:
-            self._requested_replay = (str(video_path), str(srt_path))
+            run_id = f"run_{uuid.uuid4().hex[:12]}"
+            self._requested_replay = (str(video_path), str(srt_path), replay_id, run_id, model_id)
+            self._finished_replay = False
         self._stop_playback.set()
         self._wake_playback.set()
         self.get_logger().info(f"Replay selection received: {video_path.name}")
@@ -129,22 +139,58 @@ class DroneDataPublisher(Node):
     def replay_command_cb(self, msg):
         """Handle play, pause, and reset commands from the dashboard."""
         try:
-            command = str(json.loads(msg.data).get("command", "")).lower()
+            payload = json.loads(msg.data)
+            command = str(payload.get("command", "")).lower()
         except (ValueError, TypeError, AttributeError):
+            payload = {}
             command = str(msg.data).lower().strip()
 
         if command == "pause":
             self._pause_playback.set()
             self._publish_current_replay_state("paused")
         elif command == "play":
+            if self._finished_replay:
+                with self._replay_lock:
+                    if self._requested_replay is not None:
+                        video_path, srt_path, replay_id, _old_run_id, model_id = self._requested_replay
+                        self._requested_replay = (
+                            video_path, srt_path, replay_id, f"run_{uuid.uuid4().hex[:12]}", model_id
+                        )
+                        self._finished_replay = False
             self._pause_playback.clear()
             self._wake_playback.set()
             self._publish_current_replay_state("playing")
+        elif command == "loop":
+            self.loop_video = bool(payload.get("enabled", False))
+            if self.loop_video and self._finished_replay:
+                with self._replay_lock:
+                    if self._requested_replay is not None:
+                        video_path, srt_path, replay_id, _old_run_id, model_id = self._requested_replay
+                        self._requested_replay = (
+                            video_path, srt_path, replay_id, f"run_{uuid.uuid4().hex[:12]}", model_id
+                        )
+                        self._finished_replay = False
+                self._wake_playback.set()
+            self._publish_current_replay_state(
+                "playing" if self._last_replay_status and self._last_replay_status.get("playing") else "paused"
+            )
         elif command == "reset":
             self._pause_playback.clear()
+            with self._replay_lock:
+                self._finished_replay = False
+                if self._requested_replay is not None:
+                    video_path, srt_path, replay_id, _old_run_id, model_id = self._requested_replay
+                    new_run_id = f"run_{uuid.uuid4().hex[:12]}"
+                    self._requested_replay = (
+                        video_path,
+                        srt_path,
+                        replay_id,
+                        new_run_id,
+                        model_id,
+                    )
             self._stop_playback.set()
             self._wake_playback.set()
-            self.get_logger().info("Replay reset requested: restarting current video and tracker state")
+            self.get_logger().info("Replay reset requested: starting a fresh analysis session")
         else:
             self.get_logger().warning(f"Ignoring unknown replay command: {command}")
 
@@ -158,7 +204,11 @@ class DroneDataPublisher(Node):
                 self._wake_playback.clear()
                 continue
 
-            video_path, srt_path = replay
+            video_path, srt_path, replay_id, run_id, model_id = replay
+            if self._finished_replay:
+                self._wake_playback.wait(timeout=1.0)
+                self._wake_playback.clear()
+                continue
             self._stop_playback.clear()
             self._wake_playback.clear()
             self._pause_playback.clear()
@@ -168,14 +218,21 @@ class DroneDataPublisher(Node):
                     f"Selected replay: {video_path} ({len(self.srt_data)} SRT frames)"
                 )
                 self.replay_reset_pub.publish(Empty())
-                self.stream_data(video_path)
+                self.stream_data(
+                    video_path,
+                    replay_id=replay_id,
+                    run_id=run_id,
+                    model_id=model_id,
+                )
             except Exception as exc:
                 self.get_logger().error(f"Replay failed: {exc}")
                 self._wake_playback.wait(timeout=1.0)
                 self._wake_playback.clear()
 
             if not self._stop_playback.is_set() and not self.loop_video:
-                break
+                self._finished_replay = True
+                self._wake_playback.wait(timeout=1.0)
+                self._wake_playback.clear()
 
     def stop_playback(self):
         """Stop the worker cleanly during ROS shutdown."""
@@ -184,16 +241,41 @@ class DroneDataPublisher(Node):
         if getattr(self, "playback_thread", None) is not None:
             self.playback_thread.join(timeout=2.0)
 
-    def publish_replay_status(self, video_path, current_time_s, duration_s, playing=True):
+    @staticmethod
+    def _replay_id_for_path(video_path):
+        """Return a stable non-filesystem identifier for a packaged replay."""
+        path = Path(video_path).as_posix()
+        marker = "/models/"
+        if marker in path:
+            return path.split(marker, 1)[1]
+        return Path(video_path).name
+
+    def publish_replay_status(
+        self,
+        video_path,
+        current_time_s,
+        duration_s,
+        playing=True,
+        replay_id=None,
+        run_id=None,
+        model_id=None,
+    ):
         """Publish timing metadata for the dashboard replay timeline."""
+        replay_id = replay_id or self._replay_id_for_path(video_path)
+        run_id = run_id or "run_unknown"
         status = {
             "video_name": Path(video_path).name,
+            "model_id": model_id,
+            "replay_id": replay_id,
+            "run_id": run_id,
+            "session_id": f"{Path(video_path).name}:replay:{replay_id}:run:{run_id}",
             "start_time_s": 0.0,
             "current_time_s": max(0.0, float(current_time_s)),
             "end_time_s": max(0.0, float(duration_s)),
             "duration_s": max(0.0, float(duration_s)),
             "playing": bool(playing),
             "state": "playing" if playing else "ended",
+            "loop_enabled": bool(self.loop_video),
         }
         with self._replay_lock:
             self._last_replay_status = status
@@ -279,7 +361,7 @@ class DroneDataPublisher(Node):
         except:
             return value
 
-    def stream_data(self, video_path):
+    def stream_data(self, video_path, replay_id=None, run_id=None, model_id=None):
         """Stream video and publish synchronized telemetry data"""
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -294,7 +376,15 @@ class DroneDataPublisher(Node):
         duration_s = max(0.0, srt_end - srt_start, frame_count * frame_duration)
 
         self.get_logger().info(f"Streaming at {fps:.2f} FPS")
-        self.publish_replay_status(video_path, 0.0, duration_s)
+        active_run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
+        self.publish_replay_status(
+            video_path,
+            0.0,
+            duration_s,
+            replay_id=replay_id,
+            run_id=active_run_id,
+            model_id=model_id,
+        )
 
         frame_idx = 0
         start_time = time.time()
@@ -309,12 +399,32 @@ class DroneDataPublisher(Node):
             ret, frame = cap.read()
             if not ret:
                 if self.loop_video and not self._stop_playback.is_set():
-                    # Loop: restart video and telemetry
+                    # Loop: restart video and telemetry as a fresh analysis run.
+                    # This prevents repeated playback from mixing observations
+                    # with the previous pass through the recording.
                     replay_generation += 1
-                    self.publish_replay_status(video_path, duration_s, duration_s, playing=False)
+                    self.publish_replay_status(
+                        video_path,
+                        duration_s,
+                        duration_s,
+                        playing=False,
+                        replay_id=replay_id,
+                        run_id=active_run_id,
+                        model_id=model_id,
+                    )
                     self.replay_reset_pub.publish(Empty())
+                    active_run_id = f"run_{uuid.uuid4().hex[:12]}"
+                    self.publish_replay_status(
+                        video_path,
+                        0.0,
+                        duration_s,
+                        playing=True,
+                        replay_id=replay_id,
+                        run_id=active_run_id,
+                        model_id=model_id,
+                    )
                     self.get_logger().info(
-                        f"Replay loop {replay_generation}: published /drone/replay_reset"
+                        f"Replay loop {replay_generation}: started new analysis session"
                     )
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     frame_idx = 0
@@ -329,7 +439,14 @@ class DroneDataPublisher(Node):
                 current_time_s = float(telemetry.get("time", srt_start)) - srt_start
             else:
                 current_time_s = frame_idx * frame_duration
-            self.publish_replay_status(video_path, current_time_s, duration_s)
+            self.publish_replay_status(
+                video_path,
+                current_time_s,
+                duration_s,
+                replay_id=replay_id,
+                run_id=active_run_id,
+                model_id=model_id,
+            )
 
             # Publish image frame
             try:
@@ -350,6 +467,16 @@ class DroneDataPublisher(Node):
             frame_idx += 1
 
         cap.release()
+        if not self._stop_playback.is_set() and rclpy.ok() and not self.loop_video:
+            self.publish_replay_status(
+                video_path,
+                duration_s,
+                duration_s,
+                playing=False,
+                replay_id=replay_id,
+                run_id=active_run_id,
+                model_id=model_id,
+            )
         self.get_logger().info("Streaming stopped")
 
     def publish_telemetry(self, data):

@@ -35,6 +35,7 @@ setup(
         "flask",
         "flask-socketio",
         "python-socketio",
+        "nvidia-ml-py",
     ],
     zip_safe=False,
     maintainer="james",

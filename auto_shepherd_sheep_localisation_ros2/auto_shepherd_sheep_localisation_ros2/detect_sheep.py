@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import os
+import json
+from pathlib import Path as FilePath
 
 import rclpy
 from rclpy.node import Node
@@ -10,7 +12,7 @@ import cv2
 import math
 
 from sensor_msgs.msg import Image, NavSatFix
-from std_msgs.msg import Empty
+from std_msgs.msg import Empty, String
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped, Vector3Stamped
 
@@ -46,11 +48,16 @@ class SheepDetector(Node):
 
         # publisher for the annotated image with bounding boxes
         self.image_pub = self.create_publisher(Image, "/sheep_detections", 10)
+        self.replay_reset_pub = self.create_publisher(Empty, "/drone/replay_reset", 10)
+        self.movement_candidate_ids = set()
 
         # subscribe to latched GPS and live image topics
         self.create_subscription(NavSatFix, "/drone/gps", self.gps_cb, self.qos())
         self.create_subscription(Image, "/drone/image", self.image_cb, 10)
         self.create_subscription(Empty, "/drone/replay_reset", self.replay_reset_cb, 10)
+        self.create_subscription(String, "/drone/select_model", self.model_selection_cb, 10)
+        self.create_subscription(String, "/drone/select_inference_size", self.inference_size_cb, 10)
+        self.create_subscription(String, "/sheep/boids_analysis", self.boids_analysis_cb, 10)
 
         # subscribe to drone attitude and gimbal for accurate GPS conversion
         self.create_subscription(
@@ -61,9 +68,30 @@ class SheepDetector(Node):
         # Identify weights filepath - use env vars if set, otherwise use config defaults
         yolo_weights = os.getenv("YOLO_WEIGHTS")
         yolo_weights_path = yolo_weights if yolo_weights else YOLO_WEIGHTS_SHEEP
+        self.model_dir = FilePath(__file__).resolve().parent / "detection_process" / "models" / "samples" / "sample_model"
+        model_paths = self.model_dir.iterdir() if self.model_dir.is_dir() else []
+        self.available_models = {
+            path.name: path
+            for path in model_paths
+            if path.is_file() and path.suffix.lower() in {".pt", ".onnx", ".engine"}
+        }
+        self.selected_model_id = FilePath(yolo_weights_path).name
 
         yolo_tracker = os.getenv("YOLO_TRACKER")
         yolo_tracker_path = yolo_tracker if yolo_tracker else YOLO_TRACKER
+        try:
+            configured_size = int(os.getenv("YOLO_IMGSZ", "640"))
+        except ValueError:
+            configured_size = 640
+        if configured_size not in {640, 960, 1280}:
+            self.get_logger().warning(
+                f"Unsupported YOLO_IMGSZ={configured_size}; using 640. Allowed sizes: 640, 960, 1280"
+            )
+            configured_size = 640
+        self.inference_size = configured_size
+        self.inference_mode = os.getenv("YOLO_TILING", "full").strip().lower()
+        if self.inference_mode not in {"full", "2x2"}:
+            self.inference_mode = "full"
 
         self.SD = SheepDetectROS(
             yolo_weights_path,
@@ -74,14 +102,79 @@ class SheepDetector(Node):
             max_det=SM,
             verbose=SV,
             stream=SS,
+            imgsz=self.inference_size,
+            tiling_mode=self.inference_mode,
         )
         self.bridge = CvBridge()
         self.get_logger().info("✅ Sheep Detector Node Ready - Waiting for images...")
 
+    def model_selection_cb(self, msg: String):
+        """Switch to a model selected by the dashboard from the allow-listed folder."""
+        try:
+            payload = json.loads(msg.data)
+            model_id = str(payload.get("model_id", "")).strip()
+        except (TypeError, ValueError, AttributeError):
+            model_id = str(msg.data).strip()
+        model_path = self.available_models.get(model_id)
+        if model_path is None:
+            self.get_logger().warning(f"Ignoring unavailable detector model: {model_id}")
+            return
+        try:
+            self.SD.set_model(str(model_path))
+            self.SD.reset_tracker()
+            self.selected_model_id = model_id
+            self.get_logger().info(f"🔁 Detector model changed to {model_id}")
+        except Exception as exc:
+            self.get_logger().error(f"Failed to load detector model {model_id}: {exc}")
+
+    def inference_size_cb(self, msg: String):
+        """Apply dashboard-selected Ultralytics size and tiling settings."""
+        try:
+            payload = json.loads(msg.data)
+            value = payload.get("imgsz", payload.get("size"))
+            mode = str(payload.get("mode", payload.get("tiling_mode", self.inference_mode))).strip().lower()
+        except (TypeError, ValueError, AttributeError):
+            value = msg.data
+            mode = self.inference_mode
+        try:
+            value = int(value)
+            if value not in {640, 960, 1280}:
+                raise ValueError
+            if mode not in {"full", "2x2"}:
+                raise ValueError
+            size_changed = value != self.inference_size
+            mode_changed = mode != self.inference_mode
+            self.SD.set_inference_size(value)
+            self.SD.set_tiling_mode(mode)
+            self.inference_size = value
+            self.inference_mode = mode
+            if size_changed or mode_changed:
+                # A different resize canvas can change detections enough to
+                # make existing ByteTrack associations unreliable.
+                self.SD.reset_tracker()
+                self.replay_reset_pub.publish(Empty())
+            self.get_logger().info(f"🔎 YOLO inference settings changed: size={value}, mode={mode}")
+        except (TypeError, ValueError):
+            self.get_logger().warning(
+                f"Ignoring unsupported YOLO inference size: {value!r}. Allowed sizes: 640, 960, 1280"
+            )
+
     def replay_reset_cb(self, _msg: Empty):
         """Start a fresh ByteTrack ID namespace when replay restarts."""
         self.SD.reset_tracker()
+        self.movement_candidate_ids.clear()
         self.get_logger().info("🔄 Replay reset received; ByteTrack IDs restarted")
+
+    def boids_analysis_cb(self, msg: String):
+        """Track current persistent movement-screening candidates for video annotation."""
+        try:
+            result = json.loads(msg.data)
+            self.movement_candidate_ids = {
+                str(track_id) for track_id in result.get("outliers", [])
+            }
+        except (TypeError, ValueError, AttributeError):
+            # Keep the last valid candidate set if a malformed result arrives.
+            return
 
     # convenience method for QoS profile matching publisher
     def qos(self):
@@ -116,6 +209,9 @@ class SheepDetector(Node):
             gimbal=self.gimbal,
             camera=self.camera,
         )
+        if self.SD.last_inference_warning:
+            self.get_logger().warning(self.SD.last_inference_warning)
+            self.SD.last_inference_warning = None
 
         sheep_ids, poses, boxes = detections[0], detections[1], detections[2]
 
@@ -133,21 +229,25 @@ class SheepDetector(Node):
             x1, y1, x2, y2 = box.xyxy.numpy()[0]
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
 
-            # Draw rectangle
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            is_candidate = str(sheep_id) in self.movement_candidate_ids
+            colour = (0, 165, 255) if is_candidate else (0, 255, 0)  # BGR orange/green
+            thickness = 4 if is_candidate else 2
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), colour, thickness)
 
             # Draw ID and GPS coordinates label
             lat = pose["position"]["x"]
             lon = pose["position"]["y"]
-            label = f"ID: {sheep_id} | {lat:.6f}, {lon:.6f}"
+            label = f"Observation: {sheep_id}"
+            if is_candidate:
+                label = f"MOVEMENT CANDIDATE | {label}"
             cv2.putText(
                 annotated_frame,
                 label,
                 (x1, y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
-                (0, 255, 0),
-                2,
+                colour,
+                2 if is_candidate else 1,
             )
 
         # Publish annotated image
